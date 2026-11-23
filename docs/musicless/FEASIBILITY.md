@@ -1,7 +1,10 @@
 # Musicless / NewTube feasibility prototype
 
-Status: **opt-in delayed-audio prototype, not ready to ship**. Desktop CPU headroom
-looks promising; Android playback timing, memory and energy have not been measured.
+Status: **opt-in withheld-audio prototype, not ready to ship**. Output is now
+sample-aligned, with no startup padding or duplicated EOF overlap. Ordinary VOD
+holds work by source inspection, but **EOF can bypass the hold**, so withholding
+alone is not a complete A/V sync solution. Android sync, memory and energy remain
+unmeasured.
 No account, API, network, live-stream or Cast behavior was changed.
 
 ## Source and exact pipeline
@@ -29,7 +32,7 @@ Inspected https://github.com/ieasybooks/musicless at
 | Mask | `(v + 1e-10/2)/(v + 2*a + 1e-10)` from the two networks' magnitude estimates; no squared Wiener mask |
 | Reconstruction | Multiply original complex spectrum by mask, retain mixture phase; frame 513 repeats frame 512's mask; all higher bins zero; inverse FFT /4096, Hann overlap-add divided by sum(Hann^2) where >1e-11 |
 | Stitching | First window has no fade-in; subsequent heads multiply by `(i+0.5)/2048`; every window tail multiplies by `1-(i+0.5)/2048`; add overlapping tails/heads, truncate to original duration |
-| Browser timing | Browser holds the **video** while audio is missing, waits for >=3 s ready, and schedules vocals against the video clock; this prototype deliberately does not implement that independent clock/hold layer |
+| Browser timing | Browser holds the **video** while audio is missing, waits for >=3 s ready, and schedules vocals against the video clock; this prototype instead withholds PCM and relies on Media3 readiness/buffering (limitations below) |
 
 ## Offline benchmark
 
@@ -110,21 +113,147 @@ under its included MIT license. `benchmark.py` adds explicit thread settings,
 load/elapsed/RSS measurements, shape/finite checks and the SDR comparison.
 Raw JSON measurements remain at `/tmp/musicless-bench/{fp32,fp16}-{1,4}.json`.
 
+## Hold/backpressure follow-up: Media3 1.10.1 source audit
+
+Sources: Maven `media3-exoplayer-1.10.1-sources.jar` and
+`media3-common-1.10.1-sources.jar`, extracted at
+`/tmp/musicless-bench/media3-src/`. Paths below are relative to that root;
+upstream tag: https://github.com/androidx/media/tree/1.10.1/libraries.
+
+**Verdict: ordinary VOD holds are supported; the unconditional audio-master
+hypothesis is refuted.** In particular, a short clip decoded to EOF before its
+first inference completes can let video run on the standalone clock while waiting
+for vocals. No claim is made that this follow-up alone fixes that case; a renderer/
+player-level hold or a predecoded source is still needed. This is source evidence
+plus a real-library clock-selection unit check, not an on-device sync result.
+
+- `androidx/media3/exoplayer/audio/DefaultAudioSink.java:726-733`: before output
+  initialization it returns `CURRENT_POSITION_NOT_SET`; after initialization its
+  position is clamped to **written** frames. Submitting decoded PCM to our worker
+  does not advance that count. `MediaCodecAudioRenderer.java:789-800,1140-1152`
+  defines readiness as `audioSink.hasPendingData()` and retains its prior media
+  position when the sink has no position. `DefaultAudioSink.java:1301-1306,1878-1882`
+  counts only frames still pending in the actual audio output, not inference work.
+- `androidx/media3/exoplayer/ExoPlayerImplInternal.java:1407-1423,1446-1467`:
+  unready renderers normally prevent READY; READY -> BUFFERING stops the renderers;
+  `:1258-1259` explicitly stops the media clock. **Exception:**
+  `RendererHolder.java:415-420` allows playback when `hasReadStreamToEnd()` even
+  if the renderer is not ready/ended; `ExoPlayerImplInternal.java:2440-2452` can
+  therefore enter READY when fully loaded. Thus EOF does not reliably buffer.
+  `DefaultMediaClock.java:162-192,198-207` normally uses the audio renderer clock,
+  but can switch to the standalone clock if the renderer ended, is reading ahead,
+  or is unready and has read its stream to the end. Do **not** claim an invariant
+  that video always follows AudioTrack at EOF, uneven track durations, or period
+  transitions. The real-library unit test holds audio position at zero, advances
+  wall time by 12 s and observes no media advance before EOF, then flips
+  `hasReadStreamToEnd()` and observes the standalone position advance. Combined
+  with `RendererHolder` above, this refutes the hold guarantee at EOF.
+- `androidx/media3/exoplayer/audio/AudioTrackPositionTracker.java:226-280` can
+  extrapolate/smooth timestamps; the sink's written-frame clamp is the decisive
+  underrun bound. Its 200 ms stalled-track reset (`:120,297-301,508-523`) requires
+  API <=29, a raw playback head that **reset to zero after being positive**, and
+  written frames; ordinary starvation with an unchanged head is not that case.
+  `DefaultAudioSink.java:1055-1059` resets such a genuinely stalled output.
+  `AudioTrackAudioOutput.java:447-473` reports underruns, not an inference timeout.
+  Startup now creates no AudioTrack until real output is available.
+- The internal 4 s stuck-buffering watchdog
+  (`ExoPlayerImplInternal.java:191-202,1469-1495`) requires NOT loading, <500 ms
+  buffered, and more media possible. A completed 11.89 s window held for inference
+  is still buffered media; a fully loaded short stream has no more loading possible.
+  The generic buffering watchdog defaults to **600 s**, not 12 s
+  (`ExoPlayer.java:231-250`); the 10 s playing watchdog (30 s emulator) is gated
+  on `isPlaying()` (`common/util/StuckPlayerDetector.java:228-235`), so entering
+  BUFFERING disarms it. No timeout needed disabling for a multi-second hold;
+  genuine >10-minute hangs keep their error path. The app's separate 20 s
+  `BufferingDetector` can lower video quality on very slow inference/network
+  waits (`common/.../ErrorFixerController.java:157-187`); it is not a PCM padding
+  or clock-reset path and is unchanged by this experiment.
+- **Integration trap handled:** `DefaultAudioSink.java:1147-1162` loops while its
+  pipeline has not ended, repeatedly queuing input without checking progress.
+  `common/audio/AudioProcessingPipeline.java:332-367` itself handles zero progress,
+  but the sink's outer loop does not. Installing an async, non-consuming processor
+  *inside* the stock sink therefore busy-spins on a full queue (and can prevent
+  seek/release). `MusiclessAudioSink` now runs this processor **before** the stock
+  sink, returns `false` promptly on backpressure, polls asynchronous output on
+  each renderer retry/EOS, and sends only real output with timestamps derived from
+  its first input timestamp plus emitted frame count. No Media3 fork/reflection
+  or blocking worker wait was added. Partial writes keep the same output buffer.
+
+### Seek metadata and grid
+
+`common/audio/AudioProcessor.java:136-161` exposes
+`flush(StreamMetadata)` / `positionOffsetUs`: a window-aligned stream position,
+current at flush time, not a timestamp on each `queueInput`. `BaseAudioProcessor.java:89-102`
+forwards metadata to `onFlush(StreamMetadata)`; `AudioProcessingPipeline.java:175-190`
+propagates position offsets between processors. However **DefaultAudioSink 1.10.1
+calls `audioProcessingPipeline.flush()` without metadata** (`:830-832`), so the
+legacy overload supplies `StreamMetadata.DEFAULT` (zero), not the seek position.
+Our external processor also deliberately uses the default, flush-relative grid.
+The sink wrapper sees buffer timestamps and `AudioSink.setOutputStreamOffsetUs`
+(`audio/AudioSink.java:621-628`) can map renderer offsets, so a media-zero grid is
+achievable with explicit plumbing. Exact browser-equivalent output after an
+arbitrary seek also needs decoding/caching the preceding samples from that grid's
+window start; changing an offset or zero-padding the missing prefix is not enough.
+That separate pre-seek decode/cache path is intentionally not implemented.
+
+### ORT arena/memory-pattern A/B
+
+Same host, 60 s fixture, stored-fp16 graph and one CPU thread as above; **three
+fresh processes per setting**, sequential, no concurrent Gradle build. Added
+`benchmark.py --arena-off`, which sets both `enable_cpu_mem_arena=False` and
+`enable_mem_pattern=False`. Complete pipeline includes six STFT/inference/iSTFT
+windows and first-use inference; RSS still includes the whole Python process.
+
+| Setting | Pipeline s (3 runs) | Peak RSS MiB (3 runs) | Median pipeline s | Median peak RSS MiB |
+| --- | --- | --- | ---: | ---: |
+| Default | 3.0251 / 3.0057 / 3.0078 | 834.41 / 830.35 / 834.45 | 3.0078 | 834.41 |
+| Arena off + memory pattern off | 3.6199 / 3.5907 / 3.5616 | 559.36 / 560.93 / 561.16 | 3.5907 | 560.93 |
+
+Arena-off saves **273.47 MiB (32.8%)** median peak RSS but is **19.4% slower**,
+exceeding the requested <10% speed penalty. Therefore Java retains defaults;
+`SessionOptions.setCPUArenaAllocator(false)` and
+`setMemoryPatternOptimization(false)` exist in ORT Java 1.32.0, but are deliberately
+not applied. Android speed/RSS might differ; re-evaluate there before shipping.
+Model path loading is applied independently and avoids both Java model-byte copies.
+
+```sh
+for mode in default off; do
+  for run in 1 2 3; do
+    flag=; [ "$mode" = off ] && flag=--arena-off
+    OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 /tmp/musicless-bench/venv/bin/python \
+      tools/musicless/benchmark.py /tmp/musicless-bench/spleeter-2stems.onnx \
+      /tmp/musicless-bench/clip60.wav --threads 1 $flag \
+      --output /tmp/musicless-bench/memory-$mode-$run.npy \
+      > /tmp/musicless-bench/memory-$mode-$run.json
+  done
+done
+```
+
 ## Minimal NewTube integration
 
 - `Media3PlayerInitializer.PrerollRenderersFactory.buildAudioSink` checks
   **debug build only** `debug.arc.remove_music=1`; unset is the original sink.
-- Uses `DefaultAudioSink` + `MusiclessAudioProcessor`, disables float output,
-  refuses encoded sink formats to prevent passthrough/bypass, reports offload
-  unsupported and forces its mode disabled. Existing Opus pre-roll renderer stays.
+- Uses `MusiclessAudioSink` around `DefaultAudioSink`, with the asynchronous
+  `MusiclessAudioProcessor` **outside** the stock sink's synchronous processor loop
+  (otherwise full-queue backpressure spins the playback thread; see source audit).
+  Disables float output, refuses encoded/non-PCM16/>2-channel sink formats to prevent
+  passthrough/bypass, reports offload unsupported and forces its mode disabled.
+  Existing Opus pre-roll renderer stays.
 - Buffers decoded mono/stereo PCM16, converts to stereo 44.1 kHz, analyzes on one
   dedicated worker with ORT Android 1.32.0 CPU / one intra-op thread, reconstructs
-  masked PCM and stitches windows. At most two inference jobs and two completed
-  windows are queued; overload/model/load/inference/native failures log
-  `Musicless` and output silence, never the original mixture.
+  masked PCM and stitches windows. At most **two outstanding windows total**
+  (running/queued/completed) are retained. Full capacity leaves input bytes
+  unconsumed, without failure or silence. Startup and inference waits return empty
+  output; model/load/inference/native failures log `Musicless` and output exactly
+  the remaining accepted duration as silence, never the original mixture.
 - Flush increments a generation and discards queued/playing vocals so stale work
   cannot cross seeks; reset queues session close on its owner thread and shuts
-  down that executor. EOF zero-pads the last window and drains delayed vocals.
+  down that executor. EOF zero-pads the last window and drains only the original
+  duration, including the retained overlap once (not a duplicate overlap).
+- ORT Java accepts a filesystem path: copy the bundled model atomically to a
+  versioned cache file once, then load by path, avoiding `ByteArrayOutputStream`
+  plus `toByteArray()` copies. Cache eviction causes a new copy; copy/load errors
+  remain fail-closed. Cache filename pins the bundled model hash prefix.
 - The model is bundled in stmobile assets (with provenance/licenses), so the
   experimental path makes no model-download request; ORT telemetry is disabled.
   Prototype model/dependency packaging is unconditional for stmobile, including
@@ -155,25 +284,36 @@ against the Python reference: maximum magnitude absolute error `7.6293945e-6`,
 maximum reconstructed-sample absolute error `8.3320619e-10` with a frequency-ramp
 mask. Pure-Java unit checks cover unity-mask reconstruction, zero-mask silence,
 and complementary overlap weights; Robolectric checks cover 48->44.1 kHz sample
-count, no original-audio leakage during startup, flush/reset, and the opt-in sink's
-passthrough/offload rejection.
+count, no output before window/worker completion, bounded input backpressure,
+flush/reset with stale work (including repeated seeks without accumulating jobs),
+logged-error silence with exact duration, the opt-in
+sink's passthrough/offload rejection, and non-spinning sink backpressure with
+sample-count-based presentation timestamps. Identity-worker output matches every
+input sample within one PCM16 quantization count across multiple windows and EOF;
+a unity-mask DSP stub matches the same sample indices within 250 PCM16 counts
+(low-pass/reflect-boundary tolerance, smooth EOF fixture), with identical total length.
 These checks **do not** execute ORT Android JNI or prove device playback.
 
-- **A/V sync is knowingly wrong.** Silence advances AudioTrack/media time until
-  separated windows arrive, so vocals lag the picture by approximately a window
-  plus processing/sink look-ahead; EOF drains that delayed tail. This proves the
-  PCM/ORT seam, not a synchronized feature. A video hold plus correctly mapped
-  media/audio clocks (or a separate predecoded/cache path) is required next.
-- **Seek repeatability differs.** Flush drops old-generation output, but the
-  processor cannot see absolute media timestamps; its window grid restarts at
-  the seek position, unlike Musicless's grid from media zero. Resume/track/speed
-  changes and EOS/format-transition draining require real-player verification.
+- **A/V sync remains device-unverified, not knowingly offset by a window.** No
+  PCM is written until separated sample zero is ready. For ordinary VOD the audio
+  renderer is not ready and the player buffers, stopping its renderers/clock;
+  mid-stream starvation similarly buffers after the written PCM drains **unless
+  the renderer has read EOF**. EOF/read-ahead can allow playback and select the
+  standalone clock, letting video advance without vocals (including short clips).
+  No independent video-hold layer was added or claimed verified; this source-proven
+  remaining sync gap needs a separate renderer/player-level solution.
+- **Seek repeatability differs.** Flush drops old-generation output and restarts
+  the grid at the seek position, unlike Musicless's media-zero grid. Media3 does
+  expose `StreamMetadata.positionOffsetUs`, but its stock sink supplies zero;
+  timestamps alone cannot provide the pre-seek samples for the enclosing window
+  (see audit). Resume/track/speed/format transitions require real-player verification.
 - **Resampling differs.** Java uses streaming linear interpolation, not the
   extension's windowed-sinc resampler. DSP/model processing at 44.1 kHz matches;
   48 kHz Opus input quality near Nyquist is not an exact browser match.
-- **Latency** is at least 11.89 s of decoded audio plus inference; short videos
-  can have their vocals entirely in the delayed EOF tail. No UI recovery dialog,
-  progress indicator, or clock compensation was added.
+- **Look-ahead** is 11.89 s of *decoded media*, plus inference, not necessarily
+  11.89 s of wall time: decoding/network may run faster than playback. Short videos
+  wait for EOF before separation. No custom progress UI was added; buffering is
+  the existing player surface.
 - **Battery/thermal** unmeasured. One CPU thread, no NNAPI/GPU, still allocates
   spectra/windows and loads both U-Nets. Do not infer energy from desktop RTF.
 - **Phone RTF estimate only:** if a phone core is 3-10x slower than this desktop
@@ -182,7 +322,10 @@ These checks **do not** execute ORT Android JNI or prove device playback.
   sensitivity estimate, **not** a measured device forecast.
 - **RAM and APK size** are material; Android ORT arenas, fp32-expanded weights,
   model-byte loading and simultaneous playback can cause OOM/LMK on low-RAM
-  devices. Only native ABI builds carrying ORT can work.
+  devices. Path loading removes Java model copies, not ORT's working set. The
+  arena-off measurement below saves RSS but misses the requested speed budget,
+  so Java retains default arena/memory-pattern settings. Only native ABI builds
+  carrying ORT can work.
 - Model processing/fail-closed paths are experimental; unsupported decoded
   formats (>2 channels/non-PCM16) are rejected rather than played unprocessed.
 
@@ -193,15 +336,17 @@ for the required desktop pipeline measurement and was kept out of this prototype
 
 ## Build and APK-size evidence
 
-**PASS**, final clean debug build and **4/4 focused tests**, zero failures/errors:
+**PASS**, follow-up clean debug build and **12/12 focused tests**, zero failures/errors
+(10 processor/sink/clock + 2 DSP; no ORT Android JNI/device execution):
 
 ```sh
 ANDROID_HOME=$HOME/Android/Sdk \
 JAVA_HOME=$HOME/.local/share/mise/installs/java/openjdk-21.0.2 \
-./gradlew :smarttubetv:clean :smarttubetv:assembleStmobileDebug \
+nice -n 10 ./gradlew -Dorg.gradle.workers.max=2 \
+  :smarttubetv:clean :smarttubetv:assembleStmobileDebug \
   :smarttubetv:testStmobileDebugUnitTest \
   --tests 'com.newtube.mobile.player.Musicless*' --console=plain
-# BUILD SUCCESSFUL in 19s
+# BUILD SUCCESSFUL in 28s
 # 242 actionable tasks: 48 executed, 194 up-to-date
 ```
 
@@ -232,8 +377,16 @@ In the arm64 APK, the model contributes 36,491,806 compressed bytes;
 alignment/signature changes. Universal adds ORT native libraries for multiple ABIs.
 Copies of the clean baseline APKs are at `/tmp/musicless-bench/baseline-apks`.
 
-Raw logs: `/tmp/musicless-candidate-build.log`,
+Follow-up build log: `/tmp/musicless-hold-final-build.log` (clean build + all
+12 tests pass); interim test compilation used an unsupported covariant
+`ByteBuffer.flip()` return, corrected before final verification. The unity-mask
+fixture originally had an abrupt EOF discontinuity; smoothing its last 4096
+samples avoids comparing low-pass ringing against a discontinuous original.
+Additional tests cover repeated-flush queue bounds and sink timestamp/backpressure.
+Original packaging logs: `/tmp/musicless-candidate-build.log`,
 `/tmp/musicless-clean-baseline-build.log`, `/tmp/musicless-final-build.log`.
+The APK-size table above is the original commit's baseline/prototype comparison,
+not a second baseline size benchmark for this follow-up.
 Test XML: `smarttubetv/build/test-results/testStmobileDebugUnitTest/TEST-com.newtube.mobile.player.Musicless{AudioProcessor,Dsp}Test.xml`.
 `git diff --check` also passed.
 

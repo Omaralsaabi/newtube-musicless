@@ -21,12 +21,16 @@ parser.add_argument('clip')
 parser.add_argument('--threads', type=int, default=1)
 parser.add_argument('--output', required=True)
 parser.add_argument('--compare')
+parser.add_argument('--arena-off', action='store_true', help='Disable CPU arena and memory patterns')
 args = parser.parse_args()
 x, rate = sf.read(args.clip, dtype='float32', always_2d=True)
 assert rate == reference.RATE and x.shape[1] == 2 and np.isfinite(x).all()
 options = ort.SessionOptions()
 options.intra_op_num_threads = args.threads
 options.inter_op_num_threads = 1
+if args.arena_off:
+    options.enable_cpu_mem_arena = False
+    options.enable_mem_pattern = False
 options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
 options.add_free_dimension_override_by_name('num_splits', 1)
 start = time.perf_counter()
@@ -37,7 +41,7 @@ y = reference.vocals(x)
 elapsed = time.perf_counter() - start
 assert y.shape == x.shape and np.isfinite(y).all()
 np.save(args.output, y)
-result = dict(model=args.model, ort=ort.__version__, threads=args.threads,
+result = dict(model=args.model, ort=ort.__version__, threads=args.threads, arena_off=args.arena_off,
               duration_s=len(x) / rate, load_s=load, pipeline_s=elapsed,
               rtf=elapsed / (len(x) / rate), peak_rss_mib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024)
 if args.compare:

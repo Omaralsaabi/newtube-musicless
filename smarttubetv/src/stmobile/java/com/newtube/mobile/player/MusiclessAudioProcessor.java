@@ -8,6 +8,7 @@ import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
 import java.util.ArrayDeque;
 import java.util.Collections;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -15,24 +16,30 @@ import ai.onnxruntime.OnnxTensor;
 import ai.onnxruntime.OrtEnvironment;
 import ai.onnxruntime.OrtSession;
 
-/** Opt-in feasibility experiment, NOT a synchronized playback implementation. */
+/** Opt-in, bounded, sample-aligned separation experiment. */
 final class MusiclessAudioProcessor extends BaseAudioProcessor {
     private static final String TAG = "Musicless";
     private final Context context;
     private final AtomicInteger generation = new AtomicInteger();
-    private final AtomicInteger pending = new AtomicInteger();
+    private AtomicInteger outstanding = new AtomicInteger();
     private final ArrayDeque<float[]> ready = new ArrayDeque<>();
-    private float[] input = new float[MusiclessDsp.WINDOW * 2], playing;
-    private int filled, playingAt;
-    private long sourceFrame;
+    private float[] input = new float[MusiclessDsp.WINDOW * 2];
+    private int filled;
+    private long sourceFrame, receivedFrames, submittedFrames, emittedFrames;
     private double nextSample;
     private float previousLeft, previousRight;
     private volatile boolean failed;
     private boolean draining;
-    private ExecutorService executor;
+    private Executor executor;
     private Worker worker;
 
     MusiclessAudioProcessor(Context context) { this.context = context.getApplicationContext(); }
+
+    MusiclessAudioProcessor(Worker worker, Executor executor) {
+        context = null;
+        this.worker = worker;
+        this.executor = executor;
+    }
 
     @Override
     protected AudioFormat onConfigure(AudioFormat format) throws UnhandledAudioFormatException {
@@ -45,152 +52,189 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
 
     @Override
     public void queueInput(ByteBuffer buffer) {
-        int frames = buffer.remaining() / inputAudioFormat.bytesPerFrame;
-        ByteBuffer out = replaceOutputBuffer((int) Math.ceil((frames + 1.0)
-                * MusiclessDsp.RATE / inputAudioFormat.sampleRate) * 4);
         double step = inputAudioFormat.sampleRate / (double) MusiclessDsp.RATE;
-        for (int i = 0; i < frames; i++, sourceFrame++) {
+        while (buffer.remaining() >= inputAudioFormat.bytesPerFrame) {
+            // Count completed outputs too: a fast worker must not decode the entire movie ahead.
+            if (!failed && outstanding.get() >= 2) return;
             float left = buffer.getShort() / 32768f;
             float right = inputAudioFormat.channelCount == 2 ? buffer.getShort() / 32768f : left;
             while (nextSample <= sourceFrame) {
-                double fraction = sourceFrame == 0 ? 1 : nextSample - (sourceFrame - 1);
-                float l = (float) (previousLeft + fraction * (left - previousLeft));
-                float r = (float) (previousRight + fraction * (right - previousRight));
-                input[filled * 2] = l; input[filled * 2 + 1] = r;
-                if (++filled == MusiclessDsp.WINDOW) submitWindow();
-                // shortcut: silence advances the media clock; add a video/clock hold before shipping.
-                synchronized (ready) {
-                    if (playing == null && !failed) { playing = ready.poll(); playingAt = 0; }
-                    for (int c = 0; c < 2; c++) {
-                        float value = playing == null || failed ? 0 : playing[playingAt++];
-                        out.putShort((short) (Math.max(-1, Math.min(1, value)) * 32767));
-                    }
-                    if (playing != null && playingAt == playing.length) playing = null;
+                if (!failed) {
+                    double fraction = sourceFrame == 0 ? 1 : nextSample - (sourceFrame - 1);
+                    input[filled * 2] = (float) (previousLeft + fraction * (left - previousLeft));
+                    input[filled * 2 + 1] = (float) (previousRight + fraction * (right - previousRight));
+                    if (++filled == MusiclessDsp.WINDOW) submitWindow(MusiclessDsp.STRIDE);
                 }
+                receivedFrames++;
                 nextSample += step;
             }
             previousLeft = left; previousRight = right;
+            sourceFrame++;
         }
-        out.flip();
     }
-
-    private void submitWindow() { submitWindow(MusiclessDsp.STRIDE); }
 
     private void submitWindow(int outputFrames) {
         float[] block = input;
         input = new float[MusiclessDsp.WINDOW * 2];
         System.arraycopy(block, MusiclessDsp.STRIDE * 2, input, 0, MusiclessDsp.OVERLAP * 2);
         filled = MusiclessDsp.OVERLAP;
-        if (failed) return;
-        if (pending.incrementAndGet() > 2) {
-            pending.decrementAndGet();
-            fail("CPU cannot keep up; bounded inference queue full", null);
-            return;
-        }
+        submittedFrames += outputFrames;
         int token = generation.get();
+        AtomicInteger count = outstanding;
+        count.incrementAndGet();
         Worker target = worker;
         executor.execute(() -> {
+            boolean published = false;
             try {
                 if (generation.get() != token || failed) return;
                 float[] vocals = target.separate(block, token, outputFrames);
                 synchronized (ready) {
-                    if (generation.get() != token || failed) return;
-                    if (ready.size() >= 2) { fail("Output queue full", null); return; }
-                    ready.add(vocals);
+                    if (generation.get() == token && !failed) {
+                        ready.add(vocals);
+                        published = true;
+                    }
                 }
             } catch (Exception | OutOfMemoryError | LinkageError error) {
-                if (generation.get() == token) fail("Separation failed; output remains silent", error);
-            } finally { pending.decrementAndGet(); }
+                synchronized (ready) {
+                    if (generation.get() == token) fail(error);
+                }
+            } finally {
+                if (!published) count.decrementAndGet();
+            }
         });
     }
 
-    private void fail(String message, Throwable error) {
-        failed = true;
-        synchronized (ready) { ready.clear(); playing = null; }
-        Log.e(TAG, message, error);
+    private void fail(Throwable error) {
+        synchronized (ready) {
+            failed = true;
+            outstanding.addAndGet(-ready.size());
+            ready.clear();
+        }
+        Log.e(TAG, "Separation failed; output remains silent", error);
     }
 
     @Override
-    protected void onQueueEndOfStream() {
-        draining = true;
-        if (filled > 0 && !failed) submitWindow(filled);
-    }
+    protected void onQueueEndOfStream() { draining = true; }
 
     @Override
     public ByteBuffer getOutput() {
         ByteBuffer output = super.getOutput();
-        if (output.hasRemaining() || !draining || failed) return output;
+        if (output.hasRemaining()) return output;
+        if (draining && !failed && receivedFrames > submittedFrames && outstanding.get() < 2) {
+            submitWindow((int) (receivedFrames - submittedFrames));
+        }
         synchronized (ready) {
-            if (playing == null) { playing = ready.poll(); playingAt = 0; }
-            if (playing == null) return output;
-            ByteBuffer tail = replaceOutputBuffer((playing.length - playingAt) * 2);
-            while (playingAt < playing.length) {
-                float sample = playing[playingAt++];
-                tail.putShort((short) (Math.max(-1, Math.min(1, sample)) * 32767));
+            float[] vocals = failed ? null : ready.poll();
+            int frames = failed ? (int) Math.min(4096, receivedFrames - emittedFrames)
+                    : vocals == null ? 0 : vocals.length / 2;
+            if (frames == 0) return output;
+            ByteBuffer pcm = replaceOutputBuffer(frames * 4);
+            for (int i = 0; i < frames * 2; i++) {
+                float sample = failed ? 0 : vocals[i];
+                pcm.putShort((short) (Math.max(-1, Math.min(1, sample)) * 32767));
             }
-            playing = null;
-            tail.flip();
+            if (!failed) outstanding.decrementAndGet();
+            emittedFrames += frames;
+            pcm.flip();
         }
         return super.getOutput();
     }
 
     @Override
     public boolean isEnded() {
-        synchronized (ready) {
-            return super.isEnded() && (failed || (pending.get() == 0
-                    && ready.isEmpty() && playing == null));
-        }
+        return super.isEnded() && emittedFrames == receivedFrames;
     }
 
     @Override
-    protected void onFlush() {
-        generation.incrementAndGet();
-        synchronized (ready) { ready.clear(); playing = null; }
-        filled = playingAt = 0; sourceFrame = 0; nextSample = 0;
+    protected void onFlush(StreamMetadata metadata) {
+        synchronized (ready) {
+            generation.incrementAndGet();
+            outstanding.addAndGet(-ready.size());
+            ready.clear();
+        }
+        filled = 0; sourceFrame = receivedFrames = submittedFrames = emittedFrames = 0; nextSample = 0;
         previousLeft = previousRight = 0; failed = false; draining = false;
         java.util.Arrays.fill(input, 0);
+        // shortcut: grid is flush-relative; media-zero windows also need pre-seek context samples.
         if (executor == null) {
-            worker = new Worker();
+            worker = new OrtWorker();
             executor = Executors.newSingleThreadExecutor(r -> new Thread(r, "Musicless-ORT"));
         }
     }
 
     @Override
     protected void onReset() {
-        generation.incrementAndGet();
-        synchronized (ready) { ready.clear(); playing = null; }
+        synchronized (ready) {
+            generation.incrementAndGet();
+            outstanding.addAndGet(-ready.size());
+            ready.clear();
+            outstanding = new AtomicInteger();
+        }
         if (executor != null) {
             Worker old = worker;
             executor.execute(old::close);
-            executor.shutdown();
+            if (executor instanceof ExecutorService) ((ExecutorService) executor).shutdown();
             executor = null; worker = null;
         }
     }
 
-    private final class Worker {
+    abstract static class Worker {
+        private float[] tail;
+        private int lastGeneration = -1;
+
+        abstract float[] infer(float[] block) throws Exception;
+
+        final float[] separate(float[] block, int token, int outputFrames) throws Exception {
+            if (lastGeneration != token) { tail = null; lastGeneration = token; }
+            float[] output = infer(block);
+            for (int i = 0; i < MusiclessDsp.OVERLAP; i++) {
+                float rise = (i + .5f) / MusiclessDsp.OVERLAP;
+                for (int c = 0; c < 2; c++) {
+                    int at = i * 2 + c;
+                    if (tail != null) output[at] = tail[at] + output[at] * rise;
+                }
+            }
+            tail = java.util.Arrays.copyOfRange(output, MusiclessDsp.STRIDE * 2, output.length);
+            for (int i = 0; i < MusiclessDsp.OVERLAP; i++) {
+                float fall = 1 - (i + .5f) / MusiclessDsp.OVERLAP;
+                for (int c = 0; c < 2; c++) tail[i * 2 + c] *= fall;
+            }
+            return java.util.Arrays.copyOf(output, outputFrames * 2);
+        }
+
+        void close() {}
+    }
+
+    private final class OrtWorker extends Worker {
         final MusiclessDsp dsp = new MusiclessDsp();
         OrtSession session;
-        float[] tail;
-        int lastGeneration = -1;
 
-        float[] separate(float[] block, int token, int outputFrames) throws Exception {
+        @Override float[] infer(float[] block) throws Exception {
             if (session == null) {
                 long start = System.nanoTime();
-                try (java.io.InputStream asset = context.getAssets().open("musicless/spleeter-2stems.onnx");
-                        OrtSession.SessionOptions options = new OrtSession.SessionOptions()) {
+                // Atomic publication prevents an interrupted copy from becoming a model next run.
+                java.io.File model = new java.io.File(context.getCacheDir(), "musicless-3dc5eaf7.onnx");
+                if (!model.isFile() || model.length() != 39364042L) {
+                    java.io.File partial = java.io.File.createTempFile("musicless-", ".onnx", context.getCacheDir());
+                    try {
+                        try (java.io.InputStream asset = context.getAssets().open("musicless/spleeter-2stems.onnx");
+                                java.io.OutputStream file = new java.io.FileOutputStream(partial)) {
+                            byte[] chunk = new byte[16384];
+                            for (int count; (count = asset.read(chunk)) != -1;) file.write(chunk, 0, count);
+                        }
+                        if (!partial.renameTo(model)) throw new java.io.IOException("Model publication failed");
+                    } finally { partial.delete(); }
+                }
+                try (OrtSession.SessionOptions options = new OrtSession.SessionOptions()) {
                     options.setIntraOpNumThreads(1);
                     options.setInterOpNumThreads(1);
                     options.setSymbolicDimensionValue("num_splits", 1);
-                    java.io.ByteArrayOutputStream bytes = new java.io.ByteArrayOutputStream();
-                    byte[] chunk = new byte[16384];
-                    for (int count; (count = asset.read(chunk)) != -1;) bytes.write(chunk, 0, count);
                     OrtEnvironment environment = OrtEnvironment.getEnvironment();
                     environment.setTelemetry(false);
-                    session = environment.createSession(bytes.toByteArray(), options);
+                    session = environment.createSession(model.getAbsolutePath(), options);
                 }
                 Log.i(TAG, "Model loaded ms=" + (System.nanoTime() - start) / 1000000);
             }
-            if (lastGeneration != token) { tail = null; lastGeneration = token; }
             long start = System.nanoTime();
             float[][] analysis = dsp.analyze(block);
             float[] output;
@@ -201,20 +245,11 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
                 ((OnnxTensor) result.get(0)).getFloatBuffer().get(mask);
                 output = dsp.synthesize(analysis[0], mask);
             }
-            for (int i = 0; i < MusiclessDsp.OVERLAP; i++) {
-                float rise = (i + .5f) / MusiclessDsp.OVERLAP;
-                for (int c = 0; c < 2; c++) {
-                    int at = i * 2 + c;
-                    if (tail != null) output[at] = tail[at] + output[at] * rise;
-                    output[MusiclessDsp.STRIDE * 2 + at] *= 1 - rise;
-                }
-            }
-            tail = java.util.Arrays.copyOfRange(output, MusiclessDsp.STRIDE * 2, output.length);
             Log.i(TAG, "Window pipeline ms=" + (System.nanoTime() - start) / 1000000);
-            return java.util.Arrays.copyOf(output, outputFrames * 2);
+            return output;
         }
 
-        void close() {
+        @Override void close() {
             if (session != null) {
                 try { session.close(); } catch (Exception error) { Log.e(TAG, "Close failed", error); }
             }
