@@ -20,6 +20,9 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
     private static final String TAG = "Musicless";
     static final int FIRST_FRAMES = 64, FIRST_WINDOW = FIRST_FRAMES * MusiclessDsp.HOP;
     static final int FIRST_STRIDE = FIRST_WINDOW - MusiclessDsp.OVERLAP;
+    private static final AtomicInteger IDS = new AtomicInteger();
+    private final int id = IDS.incrementAndGet();
+    private long windowNumber;
     private final Context context;
     private final AtomicInteger generation = new AtomicInteger();
     private AtomicInteger outstanding = new AtomicInteger();
@@ -35,8 +38,8 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
     private Worker worker;
     private boolean acquired;
     private volatile boolean waitingForDownload;
-    volatile long inputReadyNs, waitModelMs, inferMs;
-    void beginHold() { inputReadyNs = 0; waitModelMs = inferMs = 0; }
+    volatile long inputReadyNs, queueMs, waitModelMs, inferMs;
+    void beginHold() { inputReadyNs = 0; queueMs = waitModelMs = inferMs = 0; }
 
     MusiclessAudioProcessor(Context context) { this.context = context.getApplicationContext(); }
 
@@ -99,13 +102,23 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
         count.incrementAndGet();
         Worker target = worker;
         long submittedNs = System.nanoTime();
+        long number = ++windowNumber, endFrame = submittedFrames;
         executor.execute(() -> {
             boolean published = false;
             try {
                 if (generation.get() != token || failed) return;
-                long queueMs = (System.nanoTime() - submittedNs) / 1000000;
+                long queuedMs = (System.nanoTime() - submittedNs) / 1000000;
                 float[] vocals = target.separate(block, token, outputFrames);
-                waitModelMs += queueMs;
+                queueMs = queuedMs;
+                Log.i(TAG, "Window pipeline ms=" + target.pipelineMs + " processor=" + id
+                        + " generation=" + token + " window=" + number
+                        + " frames=" + block.length / (2 * MusiclessDsp.HOP)
+                        + " outputStartFrame=" + (endFrame - outputFrames) + " outputFrames=" + outputFrames
+                        + " queueMs=" + queuedMs + " waitModelMs=" + target.modelMs + target.timings
+                        + " users=" + (context == null ? 0 : MusiclessModelHolder.get().userCount())
+                        + " thread=" + Thread.currentThread().getName()
+                        + " priority=" + android.os.Process.getThreadPriority(android.os.Process.myTid())
+                        + " main=" + (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()));
                 synchronized (ready) {
                     if (generation.get() == token && !failed) {
                         ready.add(vocals);
@@ -185,6 +198,7 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
         if (context != null && !acquired) {
             MusiclessModelHolder.get().acquire();
             acquired = true;
+            Log.i(TAG, "Processor acquire processor=" + id + " users=" + MusiclessModelHolder.get().userCount());
         }
     }
 
@@ -202,10 +216,15 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
             if (context == null && executor instanceof ExecutorService) ((ExecutorService) executor).shutdown();
             executor = null; worker = null;
         }
-        if (acquired) { MusiclessModelHolder.get().release(); acquired = false; }
+        if (acquired) {
+            MusiclessModelHolder.get().release(); acquired = false;
+            Log.i(TAG, "Processor release processor=" + id + " users=" + MusiclessModelHolder.get().userCount());
+        }
     }
 
     abstract static class Worker {
+        String timings = "";
+        long modelMs, pipelineMs;
         private float[] tail;
         private int lastGeneration = -1;
 
@@ -239,9 +258,10 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
             MusiclessModelHolder holder = MusiclessModelHolder.get();
             long wait = System.nanoTime();
             holder.load(MusiclessModels.get(context));
-            waitModelMs = (System.nanoTime() - wait) / 1000000;
+            waitModelMs = modelMs = (System.nanoTime() - wait) / 1000000;
             OrtSession vocals = holder.vocals, accompaniment = holder.accompaniment;
             long start = System.nanoTime();
+            long cpuStart = android.os.Debug.threadCpuTimeNanos();
             int frames = block.length / (2 * MusiclessDsp.HOP);
             MusiclessDsp dsp;
             if (frames == FIRST_FRAMES) {
@@ -251,21 +271,37 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
                 if (fullDsp == null) fullDsp = new MusiclessDsp();
                 dsp = fullDsp;
             }
+            long analyzeStart = System.nanoTime();
             float[][] analysis = dsp.analyze(block);
+            long analyzeEnd = System.nanoTime(), vocalsNs, accompanimentNs, maskNs;
             if (mask == null || mask.length != analysis[1].length) mask = new float[analysis[1].length];
             try (OnnxTensor tensor = OnnxTensor.createTensor(OrtEnvironment.getEnvironment(),
                     FloatBuffer.wrap(analysis[1]), new long[] {2, 1, frames, MusiclessDsp.BINS})) {
+                long runStart = System.nanoTime();
                 try (OrtSession.Result result = vocals.run(Collections.singletonMap(vocals.getInputNames().iterator().next(), tensor))) {
+                    vocalsNs = System.nanoTime() - runStart;
                     ((OnnxTensor) result.get(0)).getFloatBuffer().get(mask);
                 }
+                runStart = System.nanoTime();
                 try (OrtSession.Result result = accompaniment.run(Collections.singletonMap(accompaniment.getInputNames().iterator().next(), tensor))) {
+                    accompanimentNs = System.nanoTime() - runStart;
+                    long maskStart = System.nanoTime();
                     FloatBuffer music = ((OnnxTensor) result.get(0)).getFloatBuffer();
                     for (int i = 0; i < mask.length; i++) mask[i] =
                             (mask[i] + 5e-11f) / (mask[i] + 2 * music.get() + 1e-10f);
+                    maskNs = System.nanoTime() - maskStart;
                 }
             }
+            long synthesizeStart = System.nanoTime();
             float[] output = dsp.synthesize(analysis[0], mask);
-            inferMs = (System.nanoTime() - start) / 1000000;
+            long end = System.nanoTime();
+            inferMs = pipelineMs = (end - start) / 1000000;
+            timings = " analyzeMs=" + (analyzeEnd - analyzeStart) / 1000000
+                    + " vocalsMs=" + vocalsNs / 1000000 + " accompanimentMs=" + accompanimentNs / 1000000
+                    + " maskMs=" + maskNs / 1000000 + " synthesizeMs=" + (end - synthesizeStart) / 1000000
+                    + " otherMs=" + (end - start - (analyzeEnd - analyzeStart) - vocalsNs
+                            - accompanimentNs - maskNs - (end - synthesizeStart)) / 1000000
+                    + " cpuMs=" + (android.os.Debug.threadCpuTimeNanos() - cpuStart) / 1000000;
             return output;
         }
 

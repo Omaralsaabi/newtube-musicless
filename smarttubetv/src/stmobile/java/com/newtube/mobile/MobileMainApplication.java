@@ -166,6 +166,8 @@ public class MobileMainApplication extends MainApplication {
         // Keep ALL existing TV init: Conscrypt, GlobalPreferences, multidex, the
         // global exception handler and every other View->Activity mapping.
         super.onCreate();
+        // Schedules legacy bundled-model cache cleanup once, even when separation is off.
+        com.newtube.mobile.player.MusiclessModels.get(this);
 
         // Release-visible launch milestones + the "first frame drawn" hook used below.
         LaunchMilestones.install(this);

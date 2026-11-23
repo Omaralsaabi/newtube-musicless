@@ -30,6 +30,7 @@ public class MusiclessModelHolder {
             INSTANCE.scheduleRelease();
         });
     }
+    synchronized int userCount() { return users; }
     synchronized void acquire() { users++; epoch++; }
     synchronized void release() { if (users > 0) users--; scheduleRelease(); }
     private synchronized void scheduleRelease() {

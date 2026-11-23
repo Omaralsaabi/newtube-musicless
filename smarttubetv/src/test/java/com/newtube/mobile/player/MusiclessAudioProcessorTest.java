@@ -108,6 +108,28 @@ public class MusiclessAudioProcessorTest {
         org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
     }
 
+    @Test public void holdIncludesOutputWaitingForItsFirstTrackWrite() throws Exception {
+        java.util.ArrayList<Boolean> holds = new java.util.ArrayList<>();
+        MusiclessHold.Listener listener = holds::add;
+        MusiclessHold.addListener(listener);
+        Track track = new Track();
+        track.blocked = true;
+        MusiclessAudioSink sink = new MusiclessAudioSink(track.sink,
+                new MusiclessAudioProcessor(identity(), Runnable::run));
+        sink.configure(new androidx.media3.common.Format.Builder().setSampleMimeType("audio/raw")
+                .setPcmEncoding(C.ENCODING_PCM_16BIT).setSampleRate(44100).setChannelCount(2).build(), 0, null);
+        try {
+            sink.handleBuffer(pcm(MusiclessAudioProcessor.FIRST_WINDOW, 0), 0, 1);
+            sink.hasPendingData();
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            assertEquals(Boolean.TRUE, holds.get(holds.size() - 1));
+        } finally {
+            sink.reset();
+            MusiclessHold.removeListener(listener);
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+        }
+    }
+
     private static MusiclessAudioProcessor.Worker identity() {
         return new MusiclessAudioProcessor.Worker() {
             @Override float[] infer(float[] block) { return block.clone(); }
@@ -328,6 +350,74 @@ public class MusiclessAudioProcessorTest {
         assertTrue(sink.isEnded());
         sink.reset();
         while (!jobs.isEmpty()) jobs.remove().run();
+    }
+
+    @Test public void blockedTrackStillAcceptsTwoWindowsAhead() throws Exception {
+        Track track = new Track();
+        java.util.ArrayDeque<Runnable> jobs = new java.util.ArrayDeque<>();
+        MusiclessAudioSink sink = sink(track, jobs);
+        try {
+            sink.handleBuffer(pcm(MusiclessAudioProcessor.FIRST_WINDOW, 0), 0, 1);
+            jobs.remove().run();
+            track.blocked = true;
+            ByteBuffer ahead = pcm(3 * MusiclessDsp.STRIDE, MusiclessAudioProcessor.FIRST_WINDOW);
+            assertFalse(sink.handleBuffer(ahead, MusiclessAudioProcessor.FIRST_WINDOW * 1000000L / 44100, 1));
+            assertEquals("Pending output must not gate input look-ahead", 2 * MusiclessDsp.STRIDE * 4, ahead.position());
+            assertEquals(2, jobs.size());
+            int position = ahead.position();
+            sink.handleBuffer(ahead, MusiclessAudioProcessor.FIRST_WINDOW * 1000000L / 44100, 1);
+            assertEquals("Look-ahead remains bounded", position, ahead.position());
+        } finally { sink.reset(); while (!jobs.isEmpty()) jobs.remove().run(); }
+    }
+
+    @Test public void fixedLatencyWorkerHasNoSteadyPlaybackUnderrunHolds() throws Exception {
+        int[] tick = {0}, queuedFrames = {0}, workerAvailable = {0};
+        java.util.ArrayDeque<Runnable> jobs = new java.util.ArrayDeque<>();
+        java.util.ArrayDeque<Integer> due = new java.util.ArrayDeque<>();
+        java.util.ArrayList<Boolean> holds = new java.util.ArrayList<>();
+        MusiclessHold.Listener listener = holds::add;
+        MusiclessHold.addListener(listener);
+        androidx.media3.exoplayer.audio.AudioSink track = (androidx.media3.exoplayer.audio.AudioSink)
+                java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
+                        new Class<?>[] {androidx.media3.exoplayer.audio.AudioSink.class}, (proxy, method, args) -> {
+                            if (method.getName().equals("hasPendingData")) return queuedFrames[0] > 0;
+                            if (method.getName().equals("handleBuffer")) {
+                                ByteBuffer buffer = (ByteBuffer) args[0];
+                                int frames = Math.min(buffer.remaining() / 4, 4410 - queuedFrames[0]);
+                                buffer.position(buffer.position() + frames * 4);
+                                queuedFrames[0] += frames;
+                                return !buffer.hasRemaining();
+                            }
+                            if (method.getReturnType() == boolean.class) return false;
+                            if (method.getReturnType() == int.class) return 0;
+                            if (method.getReturnType() == long.class) return 0L;
+                            return null;
+                        });
+        MusiclessAudioSink sink = new MusiclessAudioSink(track, new MusiclessAudioProcessor(identity(), job -> {
+            jobs.add(job);
+            workerAvailable[0] = Math.max(tick[0], workerAvailable[0]) + 50; // 500 ms per window.
+            due.add(workerAvailable[0]);
+        }));
+        sink.configure(new androidx.media3.common.Format.Builder().setSampleMimeType("audio/raw")
+                .setPcmEncoding(C.ENCODING_PCM_16BIT).setSampleRate(44100).setChannelCount(2).build(), 0, null);
+        ByteBuffer input = ByteBuffer.allocateDirect(6 * MusiclessDsp.WINDOW * 4).order(ByteOrder.nativeOrder());
+        try {
+            for (; tick[0] < 5000; tick[0]++) {
+                queuedFrames[0] = Math.max(0, queuedFrames[0] - 441); // 10 ms of playback.
+                while (!due.isEmpty() && due.peek() <= tick[0]) { due.remove(); jobs.remove().run(); }
+                sink.handleBuffer(input, 0, 1);
+                sink.hasPendingData();
+                org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            }
+            assertEquals("One start hold, no underrun holds during 50 s playback", 1,
+                    java.util.Collections.frequency(holds, Boolean.TRUE));
+            assertTrue("Played more than four full windows", input.position() > 4 * MusiclessDsp.WINDOW * 4);
+        } finally {
+            sink.reset();
+            while (!jobs.isEmpty()) jobs.remove().run();
+            MusiclessHold.removeListener(listener);
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+        }
     }
 
     private static final class Track {

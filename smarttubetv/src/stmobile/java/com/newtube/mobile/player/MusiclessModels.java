@@ -25,10 +25,21 @@ public final class MusiclessModels {
             r -> new Thread(r, "Musicless-download"));
     private static MusiclessModels instance;
     public static synchronized MusiclessModels get(Context context) {
-        if (instance == null) instance = new MusiclessModels(
-                new File(context.getApplicationContext().getNoBackupFilesDir(), "musicless"),
-                BuildConfig.MUSICLESS_MODEL_BASE_URL, NAMES, HASHES);
+        if (instance == null) {
+            instance = new MusiclessModels(
+                    new File(context.getApplicationContext().getNoBackupFilesDir(), "musicless"),
+                    BuildConfig.MUSICLESS_MODEL_BASE_URL, NAMES, HASHES);
+            File cache = context.getApplicationContext().getCacheDir();
+            DOWNLOAD.execute(() -> deleteLegacyCache(cache));
+        }
         return instance;
+    }
+    static void deleteLegacyCache(File cache) {
+        File[] files = cache.listFiles((dir, name) -> name.startsWith("musicless-") && name.endsWith(".onnx"));
+        if (files == null) return;
+        for (File file : files) {
+            if (file.isFile() && !file.delete()) android.util.Log.w("Musicless", "Cannot delete legacy cache " + file);
+        }
     }
     private final File directory;
     private final String baseUrl;

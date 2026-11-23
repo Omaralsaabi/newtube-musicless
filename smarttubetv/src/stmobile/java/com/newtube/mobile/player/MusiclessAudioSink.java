@@ -24,7 +24,7 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
     private String holdReason = "start";
 
     private void updateHold() {
-        boolean next = processor.hasPendingData() && !super.hasPendingData();
+        boolean next = (output.hasRemaining() || processor.hasPendingData()) && !super.hasPendingData();
         if (next == holding) return;
         holding = next;
         if (next) {
@@ -41,7 +41,7 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
         long inputEnd = processor.inputReadyNs == 0 ? end : processor.inputReadyNs;
         android.util.Log.i("Musicless", "hold reason=" + holdReason
                 + " waitInputMs=" + Math.max(0, (inputEnd - holdStart) / 1000000)
-                + " waitModelMs=" + processor.waitModelMs + " inferMs=" + processor.inferMs
+                + " queueMs=" + processor.queueMs + " waitModelMs=" + processor.waitModelMs + " inferMs=" + processor.inferMs
                 + " totalMs=" + (end - holdStart) / 1000000);
     }
     private void clearHold() {
@@ -128,7 +128,8 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
             inputBuffer = buffer;
         }
         if (startUs == C.TIME_UNSET) startUs = timeUs;
-        if (!drain()) return false;
+        // A full AudioTrack must not prevent bounded decoding/inference ahead of the playhead.
+        drain();
         int before = buffer.remaining();
         if (!holding && inputFrames == 0) {
             holding = true; holdStart = System.nanoTime(); processor.beginHold();

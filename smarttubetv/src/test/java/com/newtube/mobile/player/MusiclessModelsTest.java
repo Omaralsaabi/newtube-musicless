@@ -20,6 +20,21 @@ import static org.junit.Assert.*;
 @Config(sdk = 28, manifest = Config.NONE, application = android.app.Application.class)
 @ConscryptMode(ConscryptMode.Mode.OFF)
 public class MusiclessModelsTest {
+    @Test public void legacyCacheCleanupDeletesOnlyOldModelCopiesAndIsIdempotent() throws Exception {
+        File cache = Files.createTempDirectory("musicless-cache").toFile();
+        File old = new File(cache, "musicless-bcc04a15.onnx");
+        File partial = new File(cache, "musicless-123456.onnx");
+        File unrelated = new File(cache, "other.onnx");
+        File current = new File(cache, "vocals.onnx");
+        File directory = new File(cache, "musicless-directory.onnx");
+        for (File file : new File[] {old, partial, unrelated, current}) Files.write(file.toPath(), new byte[] {1});
+        assertTrue(directory.mkdir());
+        MusiclessModels.deleteLegacyCache(cache);
+        MusiclessModels.deleteLegacyCache(cache);
+        assertFalse(old.exists()); assertFalse(partial.exists());
+        assertTrue(unrelated.isFile()); assertTrue(current.isFile()); assertTrue(directory.isDirectory());
+    }
+
     private static final byte[] MODEL = "a small verified voice model fixture".getBytes(java.nio.charset.StandardCharsets.UTF_8);
     private String hash() throws Exception {
         StringBuilder s = new StringBuilder();

@@ -1,11 +1,66 @@
 # Musicless / NewTube feasibility prototype
 
-**Opt-in prototype; not ready to ship.** Round 4 moves model weights out of the APK,
-shares/preloads sessions, reduces the first window to 64 frames, and exposes holds.
-The user reported working, good-sounding separation on a real phone; this round
-has host-only verification, not fresh Android timing/sync/energy evidence.
+**Opt-in prototype; not ready to ship.** Round 5 restores sink look-ahead and adds
+per-window profiling; distribution/shared sessions/64-frame startup remain as in
+round 4. The user reported good-sounding separation on a real phone; round 5 has
+host-only verification, not fresh Android timing/sync/energy evidence.
 
-## Round 4: current implementation
+## Round 5: look-ahead repair and decisive device diagnostics
+
+**Confirmed starvation:** `MusiclessAudioSink.handleBuffer` returned immediately
+when an earlier separated output could not fit in AudioTrack. Thus the processor's
+bounded two-window queue was unreachable while that output played. Drain is now
+best-effort before accepting input; the processor still enforces the two-window
+bound (plus the sink's single pending output), so a full next window can be inferred
+while the current output plays. Format/discontinuity changes still drain first.
+This gate also existed in round 3; round 4 added visible underrun notifications,
+so its presence alone does not establish when the measured regression began.
+Hold accounting now includes output already handed from processor to sink but not
+yet written; it previously could clear a hold before the first AudioTrack write.
+
+**Regression checks:** reinstating the old early return makes both new look-ahead
+tests fail: accepted-ahead bytes **0 instead of 4,177,920**, and **3 instead of 1**
+hold entries over 50 simulated seconds. Fixed-latency 500 ms fake inference,
+100 ms AudioTrack capacity and 10 ms playback steps now yield only the initial
+hold. Another test checks pending-output hold accounting; cache cleanup preserves
+unrelated files/directories and is idempotent. **37/37 Musicless tests and debug
+assembly pass**, with the JDK 21 command below (without `clean`); logs:
+`/tmp/musicless-r5-build.log`, negative control `/tmp/musicless-r5-regression.log`.
+
+**The ~4x pipeline slowdown is NOT yet attributed or claimed fixed.** Existing
+`inferMs` excludes executor queueing, download and session load. DSP is byte-identical
+to round 3 and ORT options match. The holder serializes all session work; preload
+is idempotent, idle release is delayed, and restart destroys/releases the old player
+before creating its replacement. No new per-buffer main-thread posts were found:
+hold publication posts only transitions. One 64-frame window occurs per flush,
+then 512-frame windows; log frame ranges expose duplicates/extra flushes. No blind
+thread/ORT/model tuning was applied without emulator evidence.
+
+Exact per-window log (`Musicless` tag; milliseconds are integer wall time):
+
+```text
+Window pipeline ms=P processor=I generation=G window=N frames=64|512 outputStartFrame=S outputFrames=F queueMs=Q waitModelMs=L analyzeMs=A vocalsMs=V accompanimentMs=C maskMs=M synthesizeMs=Y otherMs=O cpuMs=T users=U thread=Musicless-ORT priority=R main=false
+```
+
+`P` excludes `Q` and `L`; the five stages plus `O` (scratch setup/tensor copies/
+result disposal) account for P, up to integer rounding. `T` is owner-thread CPU,
+not summed ORT helper-thread CPU. Each window has worker-owned timing fields,
+unaffected by UI hold resets. `Q` reveals preload/trim/release/another processor
+blocking the holder; `users` plus `Processor acquire|release processor=I users=U`
+reveals overlapping players. Large analyze/synthesize with CPU near wall time
+suggests Java execution/ART compilation; large ORT stages isolate native inference;
+large wall/CPU gaps suggest scheduling contention (ORT helpers need separate care).
+Thread priority is logged because the shared worker can be created from main during
+preload, unlike the former playback-created worker. Check an equally compiled,
+quiet-host A/B before blaming model format. Hold logs now separate `queueMs` from
+`waitModelMs`; hold aggregates remain approximate, per-window logs are authoritative.
+
+At application start, once per process, the downloader thread deletes only regular
+`cacheDir/musicless-*.onnx` files (old bundled copies/temporary copies, ~78 MB);
+current no-backup downloaded models are untouched. No device was modified; emulator
+confirmation of restored look-ahead and stage timings remains with the coordinator.
+
+## Round 4: distribution and implementation background
 
 ### Distribution and download
 
