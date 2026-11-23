@@ -58,6 +58,56 @@ public class MusiclessAudioProcessorTest {
         processor.reset();
     }
 
+    @Test public void acquisitionFailureStaysSilentAndReadyRetryRearmsSeparation() throws Exception {
+        Context context = RuntimeEnvironment.getApplication();
+        MusiclessModels models = MusiclessModels.get(context);
+        MusiclessModels.Status previous = models.status;
+        MusiclessAudioProcessor processor = new MusiclessAudioProcessor(context);
+        try {
+            models.status = MusiclessModels.Status.FAILED;
+            processor.configure(new AudioFormat(44100, 2, C.ENCODING_PCM_16BIT));
+            processor.flush();
+            processor.queueInput(pcm(MusiclessAudioProcessor.FIRST_WINDOW, 0));
+            MusiclessModelHolder.get().executor.submit(() -> {}).get(5, java.util.concurrent.TimeUnit.SECONDS);
+            int frames = 0;
+            for (ByteBuffer silence; (silence = processor.getOutput()).hasRemaining();) {
+                frames += silence.remaining() / 4;
+                while (silence.hasRemaining()) assertEquals(0, silence.getShort());
+            }
+            assertEquals(MusiclessAudioProcessor.FIRST_WINDOW, frames);
+            models.status = MusiclessModels.Status.READY;
+            processor.queueInput(pcm(100, MusiclessAudioProcessor.FIRST_WINDOW));
+            assertFalse("READY retry collects a fresh window, not permanent failure silence",
+                    processor.getOutput().hasRemaining());
+        } finally {
+            processor.reset();
+            models.status = previous;
+        }
+    }
+
+    @Test public void sinkPublishesHoldAndClearsItOnSeekAndRelease() throws Exception {
+        java.util.ArrayList<Boolean> holds = new java.util.ArrayList<>();
+        MusiclessHold.Listener listener = holds::add;
+        MusiclessHold.addListener(listener);
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+        MusiclessAudioSink sink = new MusiclessAudioSink(new Track().sink,
+                new MusiclessAudioProcessor(identity(), Runnable::run));
+        sink.configure(new androidx.media3.common.Format.Builder().setSampleMimeType("audio/raw")
+                .setPcmEncoding(C.ENCODING_PCM_16BIT).setSampleRate(44100).setChannelCount(2).build(), 0, null);
+        sink.handleBuffer(pcm(100, 0), 0, 1);
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+        assertEquals(Boolean.TRUE, holds.get(holds.size() - 1));
+        sink.flush();
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+        assertEquals(Boolean.FALSE, holds.get(holds.size() - 1));
+        sink.handleBuffer(pcm(100, 0), 2000000, 1);
+        sink.release();
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+        assertEquals(Boolean.FALSE, holds.get(holds.size() - 1));
+        MusiclessHold.removeListener(listener);
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+    }
+
     private static MusiclessAudioProcessor.Worker identity() {
         return new MusiclessAudioProcessor.Worker() {
             @Override float[] infer(float[] block) { return block.clone(); }

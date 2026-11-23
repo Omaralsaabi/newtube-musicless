@@ -19,6 +19,36 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
     private boolean draining, discontinuity;
     private long inputFrames;
     private ByteBuffer inputBuffer;
+    private boolean holding;
+    private long holdStart;
+    private String holdReason = "start";
+
+    private void updateHold() {
+        boolean next = processor.hasPendingData() && !super.hasPendingData();
+        if (next == holding) return;
+        holding = next;
+        if (next) {
+            holdStart = System.nanoTime();
+            processor.beginHold();
+        } else {
+            logHold();
+            holdReason = "underrun";
+        }
+        MusiclessHold.publish(this, next);
+    }
+    private void logHold() {
+        long end = System.nanoTime();
+        long inputEnd = processor.inputReadyNs == 0 ? end : processor.inputReadyNs;
+        android.util.Log.i("Musicless", "hold reason=" + holdReason
+                + " waitInputMs=" + Math.max(0, (inputEnd - holdStart) / 1000000)
+                + " waitModelMs=" + processor.waitModelMs + " inferMs=" + processor.inferMs
+                + " totalMs=" + (end - holdStart) / 1000000);
+    }
+    private void clearHold() {
+        if (holding) logHold();
+        holding = false;
+        MusiclessHold.publish(this, false);
+    }
 
     MusiclessAudioSink(AudioSink sink, MusiclessAudioProcessor processor) {
         super(sink);
@@ -100,6 +130,10 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
         if (startUs == C.TIME_UNSET) startUs = timeUs;
         if (!drain()) return false;
         int before = buffer.remaining();
+        if (!holding && inputFrames == 0) {
+            holding = true; holdStart = System.nanoTime(); processor.beginHold();
+            MusiclessHold.publish(this, true);
+        }
         processor.queueInput(buffer);
         inputFrames += (before - buffer.remaining()) / (inputFormat.channelCount * 2);
         drain();
@@ -112,11 +146,12 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
         while (true) {
             if (!output.hasRemaining()) {
                 output = processor.getOutput();
-                if (!output.hasRemaining()) return true;
+                if (!output.hasRemaining()) { updateHold(); return true; }
                 outputTimeUs = startUs + outputFrames * 1000000L / MusiclessDsp.RATE;
                 outputFrames += output.remaining() / 4;
             }
-            if (!super.handleBuffer(output, outputTimeUs, 1)) return false;
+            if (!super.handleBuffer(output, outputTimeUs, 1)) { updateHold(); return false; }
+            updateHold();
         }
     }
 
@@ -138,7 +173,7 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
 
     @Override public boolean hasPendingData() {
         // Stream-read EOF can precede playToEndOfStream: keep ALL unwritten vocals on the audio clock.
-        // shortcut: READY holds >10s hit the playing watchdog; add a player-level hold before shipping.
+        updateHold();
         return output.hasRemaining() || processor.hasPendingData() || super.hasPendingData();
     }
 
@@ -147,6 +182,7 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
     }
 
     @Override public void flush() {
+        clearHold(); holdReason = startUs == C.TIME_UNSET ? "start" : "seek";
         super.flush();
         processor.flush();
         output = AudioProcessor.EMPTY_BUFFER;
@@ -155,6 +191,7 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
     }
 
     @Override public void reset() {
+        clearHold(); holdReason = "start";
         super.reset(); processor.reset();
         inputFormat = pendingFormat = null;
         output = AudioProcessor.EMPTY_BUFFER;

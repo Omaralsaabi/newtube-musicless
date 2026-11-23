@@ -1,10 +1,135 @@
 # Musicless / NewTube feasibility prototype
 
-**Opt-in debug prototype; not ready to ship.** Round 3 fixes the EOF clock-selection
-hole, preserves samples across speed/discontinuity boundaries, reduces desktop RSS,
-and uses a shorter first window. Android A/V sync, sustained performance, energy
-and subjective real-speech quality remain unmeasured. No account, network, live,
-Cast or source-planner behavior changed.
+**Opt-in prototype; not ready to ship.** Round 4 moves model weights out of the APK,
+shares/preloads sessions, reduces the first window to 64 frames, and exposes holds.
+The user reported working, good-sounding separation on a real phone; this round
+has host-only verification, not fresh Android timing/sync/energy evidence.
+
+## Round 4: current implementation
+
+### Distribution and download
+
+`prepare_models.py ORIGINAL_SHERPA_DIR` writes deterministic gzip assets, raw models
+and `SHA256SUMS` (hashes the **decompressed** models) to gitignored
+`tools/musicless/dist/`. Both independent U-Nets have symbolic frame dimensions,
+fp16-stored weights and Cast-to-fp32 nodes; arithmetic/input/output remain fp32.
+Licenses/notices remain packaged; no `.onnx`/`.ort` weights remain in the APK.
+Nothing was uploaded. Upload **both `.onnx.gz` files**, retaining these names, to a
+GitHub release, then build with `-PmusiclessModelBaseUrl=https://github.com/OWNER/REPO/releases/download/TAG`.
+The stmobile BuildConfig default is empty: the UI explicitly says the download is
+unconfigured, rather than pretending separation is ready.
+
+| File | Raw bytes | Gzip bytes | SHA-256 of decompressed model |
+| --- | ---: | ---: | --- |
+| vocals.onnx | 19,674,133 | 18,178,677 | `f6fce89a06c9a98846e1b38e45dcd79ade2c256c3ce11119b33474da726be552` |
+| accompaniment.onnx | 19,674,140 | 18,184,389 | `5e3f3048bf2936658a9ab3a9742b2e24765a06cc6c6c7de638aa93ea86330a45` |
+
+Transport SHA-256: `vocals.onnx.gz` =
+`176026ff131754db3595782b775dcec087ee8d851648c03f515b80e89c4b9a52`;
+`accompaniment.onnx.gz` = `4db10757d59b6c4ca2794143b53b30affca4b326e25fd4ae61d5331ec7f072c8`.
+`SHA256SUMS`: 163 bytes, SHA-256 `f91fdee54dbbd362fba4c3f06505ff4ca47327bb03303bf3a531b64bb3da12b7`.
+Combined transport: **36,363,066 bytes / 34.68 MiB** (settings: “35 MB”). Singleton
+`MusiclessModels` uses a background HttpURLConnection downloader, Range resumes of
+`noBackupFilesDir/musicless/<name>.part`, gzip extraction, SHA verification and
+atomic rename to hash-versioned final names. Interrupted network transfers retain
+`.part`; corrupt gzip/SHA failures delete partial/extraction files. HTTP 200 after a
+Range request restarts safely; 416 attempts verification of the saved complete gzip.
+Listeners/progress/errors run on main, with a settings retry action. Switching off
+keeps downloads/files. **Skipped Delete voice model:** safely coordinating deletion
+with an active shared session/download is not a trivial settings-only action.
+
+### Load, memory and first-window measurements
+
+Same host/fixture as round 3, three fresh processes per format, BASIC/intra=2/inter=1,
+arena/pattern/spinning off. RSS is whole-process peak across the 60 s DSP run, not
+Android memory or session-only memory; values vary with host allocator/load.
+
+| Format | Session load ms (three runs) | Median ms | Peak RSS MiB (three runs) | Output SDR vs fp32 |
+| --- | --- | ---: | --- | ---: |
+| fp32 ONNX | 122.77 / 124.63 / 123.64 | 123.64 | 485.26 / 483.30 / 483.27 | reference |
+| **fp16-stored ONNX** | 129.09 / 132.45 / 136.06 | **132.45** | **493.04 / 484.96 / 485.76** | **73.20 dB** |
+| fp16-source ORT, Fixed conversion | 172.09 / 173.19 / 171.27 | 172.09 | 487.38 / 495.06 / 511.74 | 73.20 dB |
+
+**Coordinator-approved choice: fp16-stored ONNX**, despite fp32 loading ~9 ms faster:
+that difference is tiny beside halving the download. Median RSS 485.76 MiB is +7.95%
+versus the 450 MiB round-3 reference, within the +10% gate; SDR clears 40 dB. ORT is
+slower and its median/one run misses the memory gate. Desktop loading is ~130 ms;
+phone delays are more plausibly input collection, first inference, or repeated
+per-player session loading than serialization format. Raw trials are in
+`/tmp/musicless-bench/r4/{fp32,half,ort}-*.json`; conversion used
+`python -m onnxruntime.tools.convert_onnx_models_to_ort tools/musicless/dist --optimization_style Fixed --output_dir /tmp/musicless-bench/r4/ort`.
+`benchmark.py --extension ort` selects the converted files; other flags match round 3.
+
+`short_window.py` now also measures 64 frames. Selected half ONNX: first-window
+DSP+inference **43.17 / 43.54 / 41.99 ms**, median **43.17 ms**; SDR vs the same span
+of 512 frames **18.82 dB** (>=15 dB). 128: 84.73 ms / 24.07 dB; full 512: 387.16 ms.
+**64 accepted:** 65,536 input samples = **1.486 s** after each flush; subsequent
+windows stay 512 frames. This remains synthetic-fixture, not general perceptual,
+evidence. Reproduce with `short_window.py MODEL CLIP COPY --separate-models tools/musicless/dist`.
+
+### Shared sessions, hold UI and download pause
+
+One process-wide `MusiclessModelHolder` owns both sessions. All preload/inference/
+close work uses one serial executor, so two processors cannot infer concurrently.
+Player creation preloads immediately when files are ready, parallel to network
+startup; acquisition completion also requests preload. Processor reset retains the
+sessions; the last active processor release schedules disposal after 2 min, invalidated
+by reuse. Memory pressure closes sessions on their owner thread; UI_HIDDEN retains
+active playback and releases idle sessions. Next inference reloads if necessary.
+
+The sink posts transition-only hold notifications (owner-token protected), including
+clearing on seek/reset/release. The activity ORs a >300 ms hold with stock BUFFERING
+and reuses the existing spinner/setup text: “Preparing voices…” or download progress/
+error, with English/Spanish strings. It never hides stock BUFFERING on a Musicless
+resume. The `Musicless` tag logs one line per finished/cancelled hold:
+`hold reason=start|seek|underrun waitInputMs=.. waitModelMs=.. inferMs=.. totalMs=..`.
+Model wait includes executor queueing/download/session load; input wait begins with
+accepted PCM, not the upstream network request. Fields are diagnostic approximations
+for an underrun overlapping already-submitted work, not a profiler trace.
+
+**Downloads do not hold a running playback clock:** while the preference is on and
+models are not READY (including failure/unconfigured), the activity sets real
+playWhenReady=false. A small gate remembers user play intent and restores it on READY
+only if the user has not paused. Play during acquisition records intent but stays
+paused; touch/notification/headset/session pause routes preserve a later user pause.
+This avoids applying the preexisting READY/no-progress watchdog to a long download.
+Ordinary short inference holds are unchanged; no watchdog is disabled. Sink failures
+still emit only silence, never original audio; failed acquisition can recover after
+retry/READY without leaking music.
+
+### Verification and remaining device checks
+
+**PASS 33/33 Musicless tests**, zero skipped/failures/errors: 15 processor/sink/clock,
+3 DSP, 5 downloader (resume, ignored Range, SHA cleanup, unconfigured, main listener),
+4 holder singleton/idle/reuse/trim lifecycle, 1 main-thread hold publication, 5 pause-gate
+intent decisions. Holder tests exercise lifecycle/scheduling without Android ORT JNI;
+format/SDR/load measurements above exercise real host ORT. A clean build also passes:
+
+```sh
+ANDROID_HOME=$HOME/Android/Sdk \
+JAVA_HOME=$HOME/.local/share/mise/installs/java/openjdk-21.0.2 \
+nice -n 10 ./gradlew -Dorg.gradle.workers.max=2 \
+  :smarttubetv:clean :smarttubetv:assembleStmobileDebug \
+  :smarttubetv:testStmobileDebugUnitTest \
+  --tests 'com.newtube.mobile.player.Musicless*' --console=plain
+```
+
+Final clean verification: 22 s; `/tmp/musicless-bench/r4/build.log`; `git diff --check` passes.
+Arm64 **clean HEAD d2788ae baseline: 181,314,570 bytes -> 108,084,251 bytes**,
+**73,230,319 bytes / 40.39% smaller**. The initially present incremental APK was
+185,571,913 bytes; use the clean baseline for comparison. Final ZIP inspected: no
+`.onnx`/`.ort` files; ORT/JNI and licenses remain packaged.
+
+No device/emulator run, upload, push or PR. Still verify on a real phone: fresh/slow/
+interrupted GitHub downloads and redirects, >10 s download without watchdog, SHA error
+retry, pause/play/headset intent while downloading, restart/seek/off-toggle cleanup,
+stock BUFFERING versus inference spinner transitions, warm engine restart/session
+reuse, 2 min idle and memory trim, first-64-frame speech quality, A/V sync, long/EOF/
+live/track transitions, RTF/RSS/thermal/battery. Ordinary inference holds >10 s retain
+the existing watchdog risk. Linear resampling and flush-relative seek-grid limitations
+from round 3 remain. The release URL must be configured and assets uploaded by the user.
+
+## Round 3 historical record (superseded where round 4 differs)
 
 ## Pipeline and provenance
 

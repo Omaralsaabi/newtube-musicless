@@ -96,7 +96,8 @@ public final class MusiclessModels {
                         || !connection.getHeaderField("Content-Range").startsWith("bytes " + offset + "-")))
                     throw new IOException("Invalid resume response");
                 if (!append) offset = 0;
-                long total = connection.getContentLengthLong() + offset;
+                long length = connection.getContentLengthLong();
+                long total = length < 0 ? -1 : length + offset;
                 try (InputStream in = connection.getInputStream(); FileOutputStream out = new FileOutputStream(partial, append)) {
                     byte[] bytes = new byte[65536];
                     for (int count; (count = in.read(bytes)) != -1;) {

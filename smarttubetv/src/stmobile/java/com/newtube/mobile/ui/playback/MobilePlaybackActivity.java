@@ -1238,7 +1238,12 @@ public class MobilePlaybackActivity extends MobileActivity
             mExoPlayerController.setVideoTrackDisabled(true);
         }
 
+        mMusiclessGate.reset();
         mMusiclessOn = com.newtube.mobile.player.MusiclessPrefs.isOn(this);
+        mMusiclessListening = true;
+        com.newtube.mobile.player.MusiclessHold.addListener(mMusiclessHoldListener);
+        com.newtube.mobile.player.MusiclessModels.get(this).addListener(mMusiclessModelListener);
+        updateMusiclessHold();
         mPlayer = mPlayerInitializer.createPlayer(
                 trackSelector, mExoPlayerController.getMediaSourceFactory().getBandwidthMeter());
         // NEWTUBE(diagnostics): media3's stock per-event logcat tap (tag EventLogger) - track/ABR
@@ -1284,7 +1289,7 @@ public class MobilePlaybackActivity extends MobileActivity
                 }
             });
         }
-        mPlayer.setPlayWhenReady(true);
+        mPlayer.setPlayWhenReady(mMusiclessGate.request(true));
         mBenchTicker = com.newtube.mobile.player.BenchTicker.startIfEnabled(
                 BuildConfig.DEBUG || BuildConfig.BENCHMARK, mPlayer, () -> {
                     Video video = getVideo();
@@ -1374,6 +1379,13 @@ public class MobilePlaybackActivity extends MobileActivity
     }
 
     private void destroyPlayerObjects() {
+        mMusiclessListening = false;
+        mMusiclessGate.reset();
+        com.newtube.mobile.player.MusiclessHold.removeListener(mMusiclessHoldListener);
+        com.newtube.mobile.player.MusiclessModels.get(this).removeListener(mMusiclessModelListener);
+        mMusiclessUi.removeCallbacks(mShowMusiclessHold);
+        mMusiclessRawHold = mMusiclessShowHold = mMusiclessHoldScheduled = false;
+        renderProgressBar(mStockProgress);
         if (mPlayer == null) {
             return;
         }
@@ -3119,7 +3131,7 @@ public class MobilePlaybackActivity extends MobileActivity
             // resume seamlessly), send the current video at the current position, show the panel.
             long resumeMs = Math.max(getPositionMs(), 0);
             if (mPlayer != null) {
-                mPlayer.setPlayWhenReady(false);
+                setPlayWhenReady(false);
             }
             Video video = getVideo();
             mCastSubtitleVssId = null;
@@ -3480,7 +3492,7 @@ public class MobilePlaybackActivity extends MobileActivity
             mCastSessionManager.loadVideo(videoId, 0);
         }
         if (mPlayer != null) {
-            mPlayer.setPlayWhenReady(false);
+            setPlayWhenReady(false);
         }
         showCastOverlay(); // refresh the "Playing on <TV>" panel over the new video
     }
@@ -3665,13 +3677,13 @@ public class MobilePlaybackActivity extends MobileActivity
             // Replay from the start.
             mIsEnded = false;
             mExoPlayerController.setPositionMs(0);
-            mExoPlayerController.setPlayWhenReady(true);
+            setPlayWhenReady(true);
             if (mPresenter != null) {
                 mPresenter.onPlayClicked();
             }
         } else {
-            boolean play = !mExoPlayerController.getPlayWhenReady();
-            mExoPlayerController.setPlayWhenReady(play);
+            boolean play = !mMusiclessGate.playIntent(mExoPlayerController.getPlayWhenReady());
+            setPlayWhenReady(play);
             if (mPresenter != null) {
                 if (play) {
                     mPresenter.onPlayClicked();
@@ -4650,7 +4662,7 @@ public class MobilePlaybackActivity extends MobileActivity
         mExoPlayerController.setPositionMs(Math.max(0, durationMs - LIVE_EDGE_OFFSET_MS));
 
         if (mPlayer != null) {
-            mPlayer.setPlayWhenReady(true);
+            setPlayWhenReady(true);
         }
     }
 
@@ -4677,6 +4689,10 @@ public class MobilePlaybackActivity extends MobileActivity
             // The old 2-arg onPlayerStateChanged callback split in two in media3; both re-enter
             // the same state handler so the icon/PiP/screen-on logic sees every combination.
             if (mPlayer != null) {
+                if (playWhenReady && mMusiclessGate.isBlocked()) {
+                    setPlayWhenReady(true);
+                    playWhenReady = false;
+                }
                 handleUiStateChange(playWhenReady, mPlayer.getPlaybackState());
             }
         }
@@ -4699,7 +4715,7 @@ public class MobilePlaybackActivity extends MobileActivity
                     // play. Re-pause the moment any (re)load reaches READY.
                     if (mCastSessionManager != null && mCastSessionManager.isConnected()
                             && mPlayer != null && mPlayer.getPlayWhenReady()) {
-                        mPlayer.setPlayWhenReady(false);
+                        setPlayWhenReady(false);
                     }
                     // A stream reached READY = the one-time session setup is complete (whether the
                     // background warmup or this very load did the work). Persists; kills the
@@ -6378,9 +6394,53 @@ public class MobilePlaybackActivity extends MobileActivity
 
     /** NEWTUBE(motion): the buffering spinner's state, see showProgressBar. */
     private boolean mSpinnerShown;
+    private boolean mStockProgress, mMusiclessRawHold, mMusiclessShowHold, mMusiclessHoldScheduled, mMusiclessListening;
+    private final com.newtube.mobile.player.MusiclessDownloadGate mMusiclessGate =
+            new com.newtube.mobile.player.MusiclessDownloadGate();
+    private final android.os.Handler mMusiclessUi = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable mShowMusiclessHold = () -> {
+        mMusiclessHoldScheduled = false;
+        mMusiclessShowHold = true;
+        renderProgressBar(mStockProgress || mMusiclessShowHold);
+    };
+    private final com.newtube.mobile.player.MusiclessHold.Listener mMusiclessHoldListener = holding -> {
+        mMusiclessRawHold = holding;
+        updateMusiclessHold();
+    };
+    private final com.newtube.mobile.player.MusiclessModels.Listener mMusiclessModelListener = this::updateMusiclessHold;
+    private void updateMusiclessHold() {
+        if (!mMusiclessListening) return;
+        boolean unavailable = mMusiclessOn && com.newtube.mobile.player.MusiclessModels.get(this).status
+                != com.newtube.mobile.player.MusiclessModels.Status.READY;
+        boolean wasBlocked = mMusiclessGate.isBlocked();
+        boolean actualPlay = mPlayer != null && mPlayer.getPlayWhenReady();
+        boolean effectivePlay = mMusiclessGate.update(unavailable, actualPlay);
+        if (wasBlocked && !unavailable && mMusiclessOn) {
+            com.newtube.mobile.player.MusiclessModelHolder.preload(this);
+        }
+        if (mPlayer != null && effectivePlay != actualPlay) {
+            mExoPlayerController.setPlayWhenReady(effectivePlay);
+        }
+        boolean waiting = mMusiclessOn && (mMusiclessRawHold || unavailable);
+        if (!waiting) {
+            mMusiclessUi.removeCallbacks(mShowMusiclessHold);
+            mMusiclessShowHold = mMusiclessHoldScheduled = false;
+            renderProgressBar(mStockProgress);
+        } else if (mMusiclessShowHold) {
+            renderProgressBar(true);
+        } else if (!mMusiclessHoldScheduled) {
+            mMusiclessHoldScheduled = true;
+            mMusiclessUi.postDelayed(mShowMusiclessHold, 300);
+        }
+    }
 
     @Override
     public void showProgressBar(boolean show) {
+        mStockProgress = show;
+        renderProgressBar(show || mMusiclessShowHold);
+    }
+
+    private void renderProgressBar(boolean show) {
         if (mProgressBar != null && show != mSpinnerShown) {
             // NEWTUBE(motion): fade in and out instead of popping, and take the play/pause glyph's
             // place rather than drawing over it (it spun around the pause bars on every open).
@@ -6401,7 +6461,14 @@ public class MobilePlaybackActivity extends MobileActivity
         // Fresh installs: while the one-time session setup is still running, tell the user why
         // this first load is longer than usual. Never shows again once any fetch succeeded.
         if (mSetupHint != null) {
-            mSetupHint.setVisibility(show && !SessionWarmup.isWarm() ? View.VISIBLE : View.GONE);
+            if (mMusiclessShowHold) {
+                com.newtube.mobile.player.MusiclessModels models = com.newtube.mobile.player.MusiclessModels.get(this);
+                mSetupHint.setText(models.status == com.newtube.mobile.player.MusiclessModels.Status.READY
+                        ? getString(R.string.musicless_preparing) : models.summary(this));
+            } else {
+                mSetupHint.setText(R.string.mobile_first_run_setup);
+            }
+            mSetupHint.setVisibility(show && (mMusiclessShowHold || !SessionWarmup.isWarm()) ? View.VISIBLE : View.GONE);
         }
     }
 
@@ -8790,7 +8857,7 @@ public class MobilePlaybackActivity extends MobileActivity
 
     @Override
     public void setPlayWhenReady(boolean play) {
-        mExoPlayerController.setPlayWhenReady(play);
+        mExoPlayerController.setPlayWhenReady(mMusiclessGate.request(play));
     }
 
     @Override

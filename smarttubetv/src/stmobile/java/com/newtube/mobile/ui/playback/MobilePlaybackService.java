@@ -178,13 +178,13 @@ public class MobilePlaybackService extends Service {
 
         @Override
         public void play() {
-            super.play();
+            requestPlay(true);
             notifyPlayClicked();
         }
 
         @Override
         public void pause() {
-            super.pause();
+            requestPlay(false);
             notifyPauseClicked();
         }
 
@@ -212,6 +212,15 @@ public class MobilePlaybackService extends Service {
      * dead - the only recovery was opening the app and tapping the in-player button.
      * ErrorFixerController turns this into a manual retry; it is a no-op during healthy playback.
      */
+    private void requestPlay(boolean play) {
+        // The view also preserves play intent while a voice model download pauses the real player.
+        if (mPresenter != null && mPresenter.getView() != null) {
+            mPresenter.getView().setPlayWhenReady(play);
+        } else if (mPlayer != null) {
+            mPlayer.setPlayWhenReady(play);
+        }
+    }
+
     private void notifyPlayClicked() {
         if (mPresenter != null) {
             Utils.post(() -> mPresenter.onPlayClicked());
@@ -276,9 +285,7 @@ public class MobilePlaybackService extends Service {
         mMediaSession.setCallback(new MediaSessionCompat.Callback() {
             @Override
             public void onPlay() {
-                if (mPlayer != null) {
-                    mPlayer.setPlayWhenReady(true);
-                }
+                requestPlay(true);
                 // Lock screen / headset / Android Auto reach the session, not the notification's
                 // own player wrapper - both need the dead-state retry (see notifyPlayClicked).
                 notifyPlayClicked();
@@ -286,9 +293,7 @@ public class MobilePlaybackService extends Service {
 
             @Override
             public void onPause() {
-                if (mPlayer != null) {
-                    mPlayer.setPlayWhenReady(false);
-                }
+                requestPlay(false);
                 notifyPauseClicked();
             }
 
@@ -311,9 +316,7 @@ public class MobilePlaybackService extends Service {
 
             @Override
             public void onStop() {
-                if (mPlayer != null) {
-                    mPlayer.setPlayWhenReady(false);
-                }
+                requestPlay(false);
             }
         });
         mMediaSession.setActive(true);
