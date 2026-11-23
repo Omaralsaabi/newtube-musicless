@@ -16,7 +16,9 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
     private int bufferSize;
     private ByteBuffer output = AudioProcessor.EMPTY_BUFFER;
     private long startUs = C.TIME_UNSET, outputFrames, outputTimeUs;
-    private boolean draining;
+    private boolean draining, discontinuity;
+    private long inputFrames;
+    private ByteBuffer inputBuffer;
 
     MusiclessAudioSink(AudioSink sink, MusiclessAudioProcessor processor) {
         super(sink);
@@ -62,7 +64,8 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
                 .build(), bufferSize, null);
         inputFormat = format;
         pendingFormat = null;
-        startUs = C.TIME_UNSET; outputFrames = 0; draining = false;
+        startUs = C.TIME_UNSET; outputFrames = inputFrames = 0;
+        draining = discontinuity = false; inputBuffer = null;
     }
 
     @Override public boolean handleBuffer(ByteBuffer buffer, long timeUs, int count)
@@ -80,11 +83,27 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
                 catch (ConfigurationException error) { throw new IllegalStateException(error); }
             }
         }
+        if (inputBuffer == null) {
+            long expectedUs = startUs + inputFrames * 1000000L / inputFormat.sampleRate;
+            if (startUs != C.TIME_UNSET && (discontinuity || Math.abs(timeUs - expectedUs) > 200000)) {
+                processor.queueEndOfStream();
+                if (!drain() || !processor.isEnded()) return false;
+                processor.flush();
+                startUs = C.TIME_UNSET; outputFrames = inputFrames = 0;
+                super.handleDiscontinuity();
+            }
+            discontinuity = false;
+            inputBuffer = buffer;
+        }
         if (startUs == C.TIME_UNSET) startUs = timeUs;
         if (!drain()) return false;
+        int before = buffer.remaining();
         processor.queueInput(buffer);
+        inputFrames += (before - buffer.remaining()) / (inputFormat.channelCount * 2);
         drain();
-        return !buffer.hasRemaining();
+        if (buffer.hasRemaining()) return false;
+        inputBuffer = null;
+        return true;
     }
 
     private boolean drain() throws InitializationException, WriteException {
@@ -110,6 +129,17 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
         }
     }
 
+    @Override public void handleDiscontinuity() {
+        // Apply at the separated-sample boundary, not to previously queued vocals.
+        discontinuity = true;
+    }
+
+    @Override public boolean hasPendingData() {
+        // Stream-read EOF can precede playToEndOfStream: keep ALL unwritten vocals on the audio clock.
+        // shortcut: READY holds >10s hit the playing watchdog; add a player-level hold before shipping.
+        return output.hasRemaining() || processor.hasPendingData() || super.hasPendingData();
+    }
+
     @Override public boolean isEnded() {
         return draining && !output.hasRemaining() && processor.isEnded() && super.isEnded();
     }
@@ -118,14 +148,16 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
         super.flush();
         processor.flush();
         output = AudioProcessor.EMPTY_BUFFER;
-        startUs = C.TIME_UNSET; outputFrames = 0; draining = false;
+        startUs = C.TIME_UNSET; outputFrames = inputFrames = 0;
+        draining = discontinuity = false; inputBuffer = null;
     }
 
     @Override public void reset() {
         super.reset(); processor.reset();
         inputFormat = pendingFormat = null;
         output = AudioProcessor.EMPTY_BUFFER;
-        startUs = C.TIME_UNSET; outputFrames = 0; draining = false;
+        startUs = C.TIME_UNSET; outputFrames = inputFrames = 0;
+        draining = discontinuity = false; inputBuffer = null;
     }
 
     @Override public void release() { reset(); super.release(); }

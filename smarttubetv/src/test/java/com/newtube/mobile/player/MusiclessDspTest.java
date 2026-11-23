@@ -27,6 +27,22 @@ public class MusiclessDspTest {
         assertTrue("Unity mask should reconstruct below-11kHz audio", error / signal < 1e-5);
     }
 
+    @Test public void shortWindowReusesScratchWithoutLeakingPreviousOutput() {
+        MusiclessDsp dsp = new MusiclessDsp(MusiclessAudioProcessor.FIRST_FRAMES);
+        float[] input = new float[MusiclessAudioProcessor.FIRST_WINDOW * 2];
+        java.util.Arrays.fill(input, .2f);
+        float[][] analysis = dsp.analyze(input);
+        float[] mask = new float[analysis[1].length];
+        java.util.Arrays.fill(mask, 1);
+        float[] output = dsp.synthesize(analysis[0], mask);
+        assertEquals(input.length, output.length);
+        assertEquals(.2f, output[12345], 1e-6);
+        java.util.Arrays.fill(input, 0);
+        assertSame(analysis, dsp.analyze(input));
+        assertSame(output, dsp.synthesize(analysis[0], mask));
+        for (float sample : output) assertEquals(0, sample, 0);
+    }
+
     @Test public void overlapWeightsSumToOne() {
         assertEquals(MusiclessDsp.WINDOW, MusiclessDsp.STRIDE + MusiclessDsp.OVERLAP);
         for (int i = 0; i < MusiclessDsp.OVERLAP; i++) {

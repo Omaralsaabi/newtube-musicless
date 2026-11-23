@@ -82,10 +82,10 @@ public class MusiclessAudioProcessorTest {
     @Test public void holdsUntilWorkerCompletesAndFullQueueBackpressures() throws Exception {
         java.util.ArrayDeque<Runnable> jobs = new java.util.ArrayDeque<>();
         MusiclessAudioProcessor processor = configured(identity(), jobs::add);
-        processor.queueInput(pcm(MusiclessDsp.WINDOW - 1, 0));
+        processor.queueInput(pcm(MusiclessAudioProcessor.FIRST_WINDOW - 1, 0));
         assertTrue(jobs.isEmpty());
         assertFalse(processor.getOutput().hasRemaining());
-        processor.queueInput(pcm(1, MusiclessDsp.WINDOW - 1));
+        processor.queueInput(pcm(1, MusiclessAudioProcessor.FIRST_WINDOW - 1));
         assertEquals(1, jobs.size());
         assertFalse(processor.getOutput().hasRemaining());
         processor.queueInput(pcm(MusiclessDsp.STRIDE, MusiclessDsp.WINDOW));
@@ -95,7 +95,7 @@ public class MusiclessAudioProcessorTest {
         assertFalse(processor.getOutput().hasRemaining());
         jobs.remove().run();
         ByteBuffer vocals = processor.getOutput();
-        assertEquals(MusiclessDsp.STRIDE * 4, vocals.remaining());
+        assertEquals(MusiclessAudioProcessor.FIRST_STRIDE * 4, vocals.remaining());
         vocals.position(vocals.limit());
         processor.queueInput(blocked);
         assertFalse(blocked.hasRemaining());
@@ -128,9 +128,9 @@ public class MusiclessAudioProcessorTest {
     }
 
     @Test public void unityMaskOutputMatchesSameInputSampleWithinLowPassDspTolerance() throws Exception {
-        MusiclessDsp dsp = new MusiclessDsp();
         checkAlignment(new MusiclessAudioProcessor.Worker() {
             @Override float[] infer(float[] block) {
+                MusiclessDsp dsp = new MusiclessDsp(block.length / (2 * MusiclessDsp.HOP));
                 float[][] analysis = dsp.analyze(block);
                 java.util.Arrays.fill(analysis[1], 1);
                 return dsp.synthesize(analysis[0], analysis[1]);
@@ -271,10 +271,159 @@ public class MusiclessAudioProcessorTest {
         while (!jobs.isEmpty()) jobs.remove().run();
         sink.playToEndOfStream();
         assertEquals(frames, written[0]);
-        assertEquals(startUs + MusiclessDsp.STRIDE * 1000000L / MusiclessDsp.RATE, (long) times.get(1));
+        assertEquals(startUs + MusiclessAudioProcessor.FIRST_STRIDE * 1000000L / MusiclessDsp.RATE, (long) times.get(1));
         assertTrue(sink.isEnded());
         sink.reset();
         while (!jobs.isEmpty()) jobs.remove().run();
+    }
+
+    private static final class Track {
+        final java.io.ByteArrayOutputStream pcm = new java.io.ByteArrayOutputStream();
+        final java.util.ArrayList<Long> times = new java.util.ArrayList<>();
+        boolean ended, blocked;
+        int discontinuities;
+        androidx.media3.common.PlaybackParameters parameters = androidx.media3.common.PlaybackParameters.DEFAULT;
+        final androidx.media3.exoplayer.audio.AudioSink sink = (androidx.media3.exoplayer.audio.AudioSink)
+                java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
+                        new Class<?>[] {androidx.media3.exoplayer.audio.AudioSink.class}, (proxy, method, args) -> {
+                            switch (method.getName()) {
+                                case "handleBuffer":
+                                    if (blocked) return false;
+                                    ByteBuffer buffer = (ByteBuffer) args[0];
+                                    times.add((Long) args[1]);
+                                    while (buffer.hasRemaining()) pcm.write(buffer.get());
+                                    return true;
+                                case "playToEndOfStream": ended = true; break;
+                                case "isEnded": return ended;
+                                case "handleDiscontinuity": discontinuities++; break;
+                                case "setPlaybackParameters": parameters = (androidx.media3.common.PlaybackParameters) args[0]; break;
+                                case "getPlaybackParameters": return parameters;
+                                case "flush": pcm.reset(); times.clear(); ended = false; break;
+                            }
+                            if (method.getReturnType() == boolean.class) return false;
+                            if (method.getReturnType() == int.class) return 0;
+                            if (method.getReturnType() == long.class) return 0L;
+                            return null;
+                        });
+    }
+
+    private static MusiclessAudioSink sink(Track track, java.util.ArrayDeque<Runnable> jobs) throws Exception {
+        MusiclessAudioSink sink = new MusiclessAudioSink(track.sink,
+                new MusiclessAudioProcessor(identity(), jobs::add));
+        sink.configure(new androidx.media3.common.Format.Builder().setSampleMimeType("audio/raw")
+                .setPcmEncoding(C.ENCODING_PCM_16BIT).setSampleRate(44100).setChannelCount(2).build(), 0, null);
+        return sink;
+    }
+
+    @Test public void pendingMusiclessKeepsRealMedia3AudioClockAtEofIncludingPartialWrite() throws Exception {
+        Track track = new Track();
+        java.util.ArrayDeque<Runnable> jobs = new java.util.ArrayDeque<>();
+        MusiclessAudioSink sink = sink(track, jobs);
+        assertTrue(sink.handleBuffer(pcm(123, 0), 0, 1));
+        assertTrue("Read-stream EOF can precede sink EOS", sink.hasPendingData());
+        androidx.media3.exoplayer.MediaClock audioClock = new androidx.media3.exoplayer.MediaClock() {
+            @Override public long getPositionUs() { return 0; }
+            @Override public boolean hasSkippedSilenceSinceLastCall() { return false; }
+            @Override public void setPlaybackParameters(androidx.media3.common.PlaybackParameters p) {}
+            @Override public androidx.media3.common.PlaybackParameters getPlaybackParameters() {
+                return androidx.media3.common.PlaybackParameters.DEFAULT;
+            }
+        };
+        androidx.media3.exoplayer.Renderer renderer = (androidx.media3.exoplayer.Renderer)
+                java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
+                        new Class<?>[] {androidx.media3.exoplayer.Renderer.class}, (proxy, method, args) -> {
+                            switch (method.getName()) {
+                                case "getMediaClock": return audioClock;
+                                case "hasReadStreamToEnd": return true;
+                                case "isReady": return sink.hasPendingData();
+                                case "isEnded": return sink.isEnded();
+                                case "getState": return androidx.media3.exoplayer.Renderer.STATE_STARTED;
+                            }
+                            if (method.getReturnType() == boolean.class) return false;
+                            return null;
+                        });
+        Class<?> type = Class.forName("androidx.media3.exoplayer.DefaultMediaClock");
+        Class<?> listenerType = Class.forName("androidx.media3.exoplayer.DefaultMediaClock$PlaybackParametersListener");
+        Object listener = java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
+                new Class<?>[] {listenerType}, (proxy, method, args) -> null);
+        java.lang.reflect.Constructor<?> constructor = type.getDeclaredConstructors()[0];
+        constructor.setAccessible(true);
+        Object clock = constructor.newInstance(listener, androidx.media3.common.util.Clock.DEFAULT);
+        java.lang.reflect.Method enable = type.getDeclaredMethod("onRendererEnabled", androidx.media3.exoplayer.Renderer.class);
+        java.lang.reflect.Method start = type.getDeclaredMethod("start");
+        java.lang.reflect.Method sync = type.getDeclaredMethod("syncAndGetPositionUs", boolean.class);
+        enable.setAccessible(true); start.setAccessible(true); sync.setAccessible(true);
+        enable.invoke(clock, renderer); start.invoke(clock);
+        assertEquals(0L, sync.invoke(clock, false));
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofSeconds(12));
+        assertEquals("Read-stream EOF must not switch to standalone even before sink EOS", 0L, sync.invoke(clock, false));
+        sink.playToEndOfStream();
+        assertTrue(sink.hasPendingData());
+        jobs.remove().run(); track.blocked = true;
+        sink.playToEndOfStream();
+        assertTrue("Still pending after getOutput but before writing", sink.hasPendingData());
+        assertFalse(sink.isEnded());
+        org.robolectric.shadows.ShadowSystemClock.advanceBy(java.time.Duration.ofSeconds(12));
+        assertEquals(0L, sync.invoke(clock, false));
+        track.blocked = false; sink.playToEndOfStream();
+        assertEquals(123 * 4, track.pcm.size());
+        assertFalse(sink.hasPendingData()); assertTrue(sink.isEnded());
+        sink.reset(); while (!jobs.isEmpty()) jobs.remove().run();
+    }
+
+    @Test public void speedChangeMidWindowPreservesMediaRateVocalsForRealSonic() throws Exception {
+        Track track = new Track();
+        java.util.ArrayDeque<Runnable> jobs = new java.util.ArrayDeque<>();
+        MusiclessAudioSink sink = sink(track, jobs);
+        int frames = MusiclessAudioProcessor.FIRST_WINDOW;
+        assertTrue(sink.handleBuffer(pcm(frames / 2, 0), 0, 1));
+        sink.setPlaybackParameters(new androidx.media3.common.PlaybackParameters(1.5f));
+        assertEquals(1.5f, track.parameters.speed, 0);
+        assertEquals(0, track.pcm.size());
+        assertTrue(sink.handleBuffer(pcm(frames / 2, frames / 2), frames / 2 * 1000000L / 44100, 1));
+        assertEquals(0, track.pcm.size());
+        sink.playToEndOfStream();
+        while (!jobs.isEmpty()) jobs.remove().run();
+        sink.playToEndOfStream();
+        assertEquals(frames * 4, track.pcm.size());
+        ByteBuffer mediaRate = ByteBuffer.wrap(track.pcm.toByteArray()).order(ByteOrder.nativeOrder());
+        compare(mediaRate.duplicate().order(ByteOrder.nativeOrder()), pcm(frames, 0), 1);
+        androidx.media3.common.audio.SonicAudioProcessor sonic = new androidx.media3.common.audio.SonicAudioProcessor();
+        sonic.setSpeed(track.parameters.speed);
+        sonic.configure(new AudioFormat(44100, 2, C.ENCODING_PCM_16BIT));
+        sonic.flush(androidx.media3.common.audio.AudioProcessor.StreamMetadata.DEFAULT);
+        sonic.queueInput(mediaRate); sonic.queueEndOfStream();
+        assertEquals(frames / 1.5, sonic.getOutput().remaining() / 4, 2);
+        sink.reset(); while (!jobs.isEmpty()) jobs.remove().run();
+    }
+
+    @Test public void timestampAndExplicitDiscontinuitiesDrainOldWindowBeforeStartingNewHold() throws Exception {
+        for (boolean explicit : new boolean[] {false, true}) {
+            Track track = new Track();
+            java.util.ArrayDeque<Runnable> jobs = new java.util.ArrayDeque<>();
+            MusiclessAudioSink sink = sink(track, jobs);
+            assertTrue(sink.handleBuffer(pcm(123, 0), 1000000, 1));
+            if (explicit) sink.handleDiscontinuity();
+            long nextUs = explicit ? 1000000 + 123 * 1000000L / 44100 : 5000000;
+            ByteBuffer next = pcm(456, 123);
+            assertFalse(sink.handleBuffer(next, nextUs, 1));
+            assertEquals(0, next.position());
+            jobs.remove().run();
+            assertTrue(sink.handleBuffer(next, nextUs, 1));
+            assertEquals(123 * 4, track.pcm.size());
+            assertEquals(1, track.discontinuities);
+            assertEquals(1000000L, (long) track.times.get(0));
+            sink.playToEndOfStream(); while (!jobs.isEmpty()) jobs.remove().run(); sink.playToEndOfStream();
+            assertEquals(nextUs, (long) track.times.get(1));
+            compare(ByteBuffer.wrap(track.pcm.toByteArray()).order(ByteOrder.nativeOrder()), pcm(579, 0), 1);
+            sink.flush();
+            assertTrue(sink.handleBuffer(pcm(17, 0), 9000000, 1));
+            assertEquals(0, track.pcm.size());
+            sink.playToEndOfStream(); while (!jobs.isEmpty()) jobs.remove().run(); sink.playToEndOfStream();
+            assertEquals(9000000L, (long) track.times.get(0));
+            assertEquals(17 * 4, track.pcm.size());
+            sink.reset(); while (!jobs.isEmpty()) jobs.remove().run();
+        }
     }
 
     @Test public void flushDiscardsInFlightWorkAndErrorsStaySilentWithSameLength() throws Exception {
@@ -282,7 +431,7 @@ public class MusiclessAudioProcessorTest {
         MusiclessAudioProcessor processor = configured(new MusiclessAudioProcessor.Worker() {
             @Override float[] infer(float[] block) { throw new IllegalStateException("test failure"); }
         }, jobs::add);
-        processor.queueInput(pcm(MusiclessDsp.WINDOW, 0));
+        processor.queueInput(pcm(MusiclessAudioProcessor.FIRST_WINDOW, 0));
         processor.flush();
         jobs.remove().run();
         assertFalse(processor.getOutput().hasRemaining());

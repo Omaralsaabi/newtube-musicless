@@ -19,12 +19,14 @@ import ai.onnxruntime.OrtSession;
 /** Opt-in, bounded, sample-aligned separation experiment. */
 final class MusiclessAudioProcessor extends BaseAudioProcessor {
     private static final String TAG = "Musicless";
+    static final int FIRST_FRAMES = 128, FIRST_WINDOW = FIRST_FRAMES * MusiclessDsp.HOP;
+    static final int FIRST_STRIDE = FIRST_WINDOW - MusiclessDsp.OVERLAP;
     private final Context context;
     private final AtomicInteger generation = new AtomicInteger();
     private AtomicInteger outstanding = new AtomicInteger();
     private final ArrayDeque<float[]> ready = new ArrayDeque<>();
     private float[] input = new float[MusiclessDsp.WINDOW * 2];
-    private int filled;
+    private int filled, window = FIRST_WINDOW;
     private long sourceFrame, receivedFrames, submittedFrames, emittedFrames;
     private double nextSample;
     private float previousLeft, previousRight;
@@ -63,7 +65,7 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
                     double fraction = sourceFrame == 0 ? 1 : nextSample - (sourceFrame - 1);
                     input[filled * 2] = (float) (previousLeft + fraction * (left - previousLeft));
                     input[filled * 2 + 1] = (float) (previousRight + fraction * (right - previousRight));
-                    if (++filled == MusiclessDsp.WINDOW) submitWindow(MusiclessDsp.STRIDE);
+                    if (++filled == window) submitWindow(window - MusiclessDsp.OVERLAP);
                 }
                 receivedFrames++;
                 nextSample += step;
@@ -74,9 +76,10 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
     }
 
     private void submitWindow(int outputFrames) {
-        float[] block = input;
+        float[] block = window == MusiclessDsp.WINDOW ? input : java.util.Arrays.copyOf(input, window * 2);
         input = new float[MusiclessDsp.WINDOW * 2];
-        System.arraycopy(block, MusiclessDsp.STRIDE * 2, input, 0, MusiclessDsp.OVERLAP * 2);
+        System.arraycopy(block, block.length - MusiclessDsp.OVERLAP * 2, input, 0, MusiclessDsp.OVERLAP * 2);
+        window = MusiclessDsp.WINDOW;
         filled = MusiclessDsp.OVERLAP;
         submittedFrames += outputFrames;
         int token = generation.get();
@@ -140,6 +143,8 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
         return super.getOutput();
     }
 
+    boolean hasPendingData() { return receivedFrames > emittedFrames; }
+
     @Override
     public boolean isEnded() {
         return super.isEnded() && emittedFrames == receivedFrames;
@@ -152,7 +157,8 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
             outstanding.addAndGet(-ready.size());
             ready.clear();
         }
-        filled = 0; sourceFrame = receivedFrames = submittedFrames = emittedFrames = 0; nextSample = 0;
+        filled = 0; window = FIRST_WINDOW;
+        sourceFrame = receivedFrames = submittedFrames = emittedFrames = 0; nextSample = 0;
         previousLeft = previousRight = 0; failed = false; draining = false;
         java.util.Arrays.fill(input, 0);
         // shortcut: grid is flush-relative; media-zero windows also need pre-seek context samples.
@@ -194,7 +200,7 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
                     if (tail != null) output[at] = tail[at] + output[at] * rise;
                 }
             }
-            tail = java.util.Arrays.copyOfRange(output, MusiclessDsp.STRIDE * 2, output.length);
+            tail = java.util.Arrays.copyOfRange(output, output.length - MusiclessDsp.OVERLAP * 2, output.length);
             for (int i = 0; i < MusiclessDsp.OVERLAP; i++) {
                 float fall = 1 - (i + .5f) / MusiclessDsp.OVERLAP;
                 for (int c = 0; c < 2; c++) tail[i * 2 + c] *= fall;
@@ -206,52 +212,79 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
     }
 
     private final class OrtWorker extends Worker {
-        final MusiclessDsp dsp = new MusiclessDsp();
-        OrtSession session;
+        MusiclessDsp fullDsp, firstDsp;
+        float[] mask;
+        OrtSession vocals, accompaniment;
 
         @Override float[] infer(float[] block) throws Exception {
-            if (session == null) {
+            if (vocals == null || accompaniment == null) {
+                close(); vocals = accompaniment = null;
                 long start = System.nanoTime();
                 // Atomic publication prevents an interrupted copy from becoming a model next run.
-                java.io.File model = new java.io.File(context.getCacheDir(), "musicless-3dc5eaf7.onnx");
-                if (!model.isFile() || model.length() != 39364042L) {
-                    java.io.File partial = java.io.File.createTempFile("musicless-", ".onnx", context.getCacheDir());
-                    try {
-                        try (java.io.InputStream asset = context.getAssets().open("musicless/spleeter-2stems.onnx");
-                                java.io.OutputStream file = new java.io.FileOutputStream(partial)) {
-                            byte[] chunk = new byte[16384];
-                            for (int count; (count = asset.read(chunk)) != -1;) file.write(chunk, 0, count);
-                        }
-                        if (!partial.renameTo(model)) throw new java.io.IOException("Model publication failed");
-                    } finally { partial.delete(); }
-                }
                 try (OrtSession.SessionOptions options = new OrtSession.SessionOptions()) {
-                    options.setIntraOpNumThreads(1);
+                    options.setIntraOpNumThreads(2);
+                    options.setCPUArenaAllocator(false);
+                    options.setMemoryPatternOptimization(false);
+                    options.addConfigEntry("session.intra_op.allow_spinning", "0");
+                    options.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.BASIC_OPT);
                     options.setInterOpNumThreads(1);
                     options.setSymbolicDimensionValue("num_splits", 1);
                     OrtEnvironment environment = OrtEnvironment.getEnvironment();
                     environment.setTelemetry(false);
-                    session = environment.createSession(model.getAbsolutePath(), options);
+                    vocals = environment.createSession(modelPath("vocals", "bcc04a15", 39318331L), options);
+                    accompaniment = environment.createSession(modelPath("accompaniment", "51671652", 39318338L), options);
                 }
                 Log.i(TAG, "Model loaded ms=" + (System.nanoTime() - start) / 1000000);
             }
             long start = System.nanoTime();
-            float[][] analysis = dsp.analyze(block);
-            float[] output;
-            try (OnnxTensor tensor = OnnxTensor.createTensor(OrtEnvironment.getEnvironment(),
-                    FloatBuffer.wrap(analysis[1]), new long[] {2, 1, 512, 1024});
-                    OrtSession.Result result = session.run(Collections.singletonMap("x", tensor))) {
-                float[] mask = new float[2 * MusiclessDsp.FRAMES * MusiclessDsp.BINS];
-                ((OnnxTensor) result.get(0)).getFloatBuffer().get(mask);
-                output = dsp.synthesize(analysis[0], mask);
+            int frames = block.length / (2 * MusiclessDsp.HOP);
+            MusiclessDsp dsp;
+            if (frames == FIRST_FRAMES) {
+                if (firstDsp == null) firstDsp = new MusiclessDsp(FIRST_FRAMES);
+                dsp = firstDsp;
+            } else {
+                if (fullDsp == null) fullDsp = new MusiclessDsp();
+                dsp = fullDsp;
             }
+            float[][] analysis = dsp.analyze(block);
+            if (mask == null || mask.length != analysis[1].length) mask = new float[analysis[1].length];
+            try (OnnxTensor tensor = OnnxTensor.createTensor(OrtEnvironment.getEnvironment(),
+                    FloatBuffer.wrap(analysis[1]), new long[] {2, 1, frames, MusiclessDsp.BINS})) {
+                try (OrtSession.Result result = vocals.run(Collections.singletonMap(vocals.getInputNames().iterator().next(), tensor))) {
+                    ((OnnxTensor) result.get(0)).getFloatBuffer().get(mask);
+                }
+                try (OrtSession.Result result = accompaniment.run(Collections.singletonMap(accompaniment.getInputNames().iterator().next(), tensor))) {
+                    FloatBuffer music = ((OnnxTensor) result.get(0)).getFloatBuffer();
+                    for (int i = 0; i < mask.length; i++) mask[i] =
+                            (mask[i] + 5e-11f) / (mask[i] + 2 * music.get() + 1e-10f);
+                }
+            }
+            float[] output = dsp.synthesize(analysis[0], mask);
             Log.i(TAG, "Window pipeline ms=" + (System.nanoTime() - start) / 1000000);
             return output;
         }
 
+        private String modelPath(String stem, String hash, long size) throws java.io.IOException {
+            java.io.File model = new java.io.File(context.getCacheDir(), "musicless-" + hash + ".onnx");
+            if (!model.isFile() || model.length() != size) {
+                java.io.File partial = java.io.File.createTempFile("musicless-", ".onnx", context.getCacheDir());
+                try {
+                    try (java.io.InputStream asset = context.getAssets().open("musicless/" + stem + ".onnx");
+                            java.io.OutputStream file = new java.io.FileOutputStream(partial)) {
+                        byte[] chunk = new byte[16384];
+                        for (int count; (count = asset.read(chunk)) != -1;) file.write(chunk, 0, count);
+                    }
+                    if (!partial.renameTo(model)) throw new java.io.IOException("Model publication failed");
+                } finally { partial.delete(); }
+            }
+            return model.getAbsolutePath();
+        }
+
         @Override void close() {
-            if (session != null) {
-                try { session.close(); } catch (Exception error) { Log.e(TAG, "Close failed", error); }
+            for (OrtSession session : new OrtSession[] {vocals, accompaniment}) {
+                if (session != null) {
+                    try { session.close(); } catch (Exception error) { Log.e(TAG, "Close failed", error); }
+                }
             }
         }
     }
