@@ -153,11 +153,20 @@ public final class SettingsPageFragment extends Fragment implements SettingsAdap
         animator.start();
     }
 
+    private final com.newtube.mobile.player.MusiclessModels.Listener mMusiclessListener = this::rebuild;
+
     @Override
     public void onResume() {
         super.onResume();
+        com.newtube.mobile.player.MusiclessModels.get(requireContext()).addListener(mMusiclessListener);
         // A sheet or another page may have changed a value; same rows, so they rebind in place.
         rebuild();
+    }
+
+    @Override
+    public void onPause() {
+        com.newtube.mobile.player.MusiclessModels.get(requireContext()).removeListener(mMusiclessListener);
+        super.onPause();
     }
 
     @Override

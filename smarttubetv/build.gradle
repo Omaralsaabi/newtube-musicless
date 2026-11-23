@@ -303,6 +303,7 @@ android {
     // flavor so its source set (src/stmobile/) keeps applying without a directory move.
     productFlavors {
         stmobile {
+            buildConfigField "String", "MUSICLESS_MODEL_BASE_URL", groovy.json.JsonOutput.toJson(project.findProperty('musiclessModelBaseUrl') ?: '')
             // Brand-neutral, GitHub-verifiable applicationId (io.github.<user>.*) chosen so the
             // package name never has to change if the app is ever renamed — "arc" ties to the
             // arch-"n" launcher mark (Catalan for "arch"). This ID is permanent once released;

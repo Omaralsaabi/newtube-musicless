@@ -78,5 +78,8 @@ tools/ui-audit/
 keystore.properties
 *.jks
 
+# Locally generated voice-model release assets
+/tools/musicless/dist/
+
 # Python bytecode from tools/*.py
 __pycache__/

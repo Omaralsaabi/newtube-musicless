@@ -178,6 +178,10 @@
     <string name="mobile_settings_sleep_timer">Sleep timer</string>
     <string name="mobile_settings_sleep_timer_summary">Pauses %1$s after you open a video</string>
     <string name="mobile_settings_audio_focus">Pause for other sounds</string>
+    <string name="musicless_preparing">Preparing voices…</string>
+    <string name="musicless_downloading">Downloading voice model… %1$d%%</string>
+    <string name="musicless_download_size">Downloads a 35 MB voice model</string>
+    <string name="musicless_retry">Retry voice model download</string>
     <string name="mobile_settings_remove_music">Remove music</string>
     <string name="mobile_settings_remove_music_summary">Plays only the voices, separated on this device. Experimental: uses more battery and memory, and the video waits while the voices are prepared</string>
     <string name="mobile_settings_audio_focus_summary">Pauses for calls and other apps\' audio. Applies to the next video you open</string>

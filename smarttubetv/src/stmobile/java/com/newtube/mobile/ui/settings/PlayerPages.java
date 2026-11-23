@@ -142,7 +142,13 @@ final class PlayerPages {
         rows.add(SettingsRow.toggle(context.getString(R.string.mobile_settings_remove_music),
                 context.getString(R.string.mobile_settings_remove_music_summary),
                 () -> com.newtube.mobile.player.MusiclessPrefs.isOn(context),
-                on -> com.newtube.mobile.player.MusiclessPrefs.setOn(context, on)));
+                on -> com.newtube.mobile.player.MusiclessPrefs.setOn(context, on))
+                .summary(() -> com.newtube.mobile.player.MusiclessModels.get(context).summary(context)));
+        if (com.newtube.mobile.player.MusiclessModels.get(context).status
+                == com.newtube.mobile.player.MusiclessModels.Status.FAILED) {
+            rows.add(SettingsRow.action(context.getString(R.string.musicless_retry), null,
+                    page -> com.newtube.mobile.player.MusiclessModels.get(context).start()));
+        }
 
         rows.add(SettingsRow.header(context.getString(R.string.mobile_settings_resume)));
         rows.add(SettingsRow.toggle(context.getString(R.string.mobile_settings_resume_short),

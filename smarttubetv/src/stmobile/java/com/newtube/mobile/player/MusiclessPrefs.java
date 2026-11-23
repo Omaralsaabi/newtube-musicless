@@ -26,5 +26,6 @@ public final class MusiclessPrefs {
 
     public static void setOn(Context context, boolean on) {
         prefs(context).edit().putBoolean(KEY_REMOVE_MUSIC, on).apply();
+        if (on) MusiclessModels.get(context).start();
     }
 }
