@@ -483,8 +483,7 @@ public class Media3PlayerInitializer {
         @Override
         protected androidx.media3.exoplayer.audio.AudioSink buildAudioSink(Context context,
                 boolean enableFloatOutput, boolean enableAudioOutputPlaybackParams) {
-            if (!com.liskovsoft.smartyoutubetv2.tv.BuildConfig.DEBUG
-                    || !"1".equals(DebugMediaShaper.prop("debug.arc.remove_music"))) {
+            if (!MusiclessPrefs.isOn(context)) {
                 return super.buildAudioSink(context, enableFloatOutput, enableAudioOutputPlaybackParams);
             }
             NetPath.log("musicless enabled: prototype withheld vocals; VOD only, device sync unverified");

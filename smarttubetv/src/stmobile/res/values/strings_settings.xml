@@ -178,6 +178,8 @@
     <string name="mobile_settings_sleep_timer">Sleep timer</string>
     <string name="mobile_settings_sleep_timer_summary">Pauses %1$s after you open a video</string>
     <string name="mobile_settings_audio_focus">Pause for other sounds</string>
+    <string name="mobile_settings_remove_music">Remove music</string>
+    <string name="mobile_settings_remove_music_summary">Plays only the voices, separated on this device. Experimental: uses more battery and memory, and the video waits while the voices are prepared</string>
     <string name="mobile_settings_audio_focus_summary">Pauses for calls and other apps\' audio. Applies to the next video you open</string>
     <string name="mobile_settings_resume">Resume</string>
     <string name="mobile_settings_resume_short">Resume short videos</string>

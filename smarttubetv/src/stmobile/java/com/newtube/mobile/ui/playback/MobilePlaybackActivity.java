@@ -370,6 +370,8 @@ public class MobilePlaybackActivity extends MobileActivity
 
     private PlaybackPresenter mPresenter;
     private Media3PlayerInitializer mPlayerInitializer;
+    /** The Remove music setting the current player was built with. */
+    private boolean mMusiclessOn;
     private Media3PlayerController mExoPlayerController;
     private ExoPlayer mPlayer;
     // NEWTUBE(bench): position/seek evidence for the in-app source benchmark; null unless
@@ -1236,6 +1238,7 @@ public class MobilePlaybackActivity extends MobileActivity
             mExoPlayerController.setVideoTrackDisabled(true);
         }
 
+        mMusiclessOn = com.newtube.mobile.player.MusiclessPrefs.isOn(this);
         mPlayer = mPlayerInitializer.createPlayer(
                 trackSelector, mExoPlayerController.getMediaSourceFactory().getBandwidthMeter());
         // NEWTUBE(diagnostics): media3's stock per-event logcat tap (tag EventLogger) - track/ABR
@@ -1450,6 +1453,11 @@ public class MobilePlaybackActivity extends MobileActivity
     @Override
     protected void onResume() {
         super.onResume();
+
+        // Remove music changed in Settings: the audio sink is built with the player, so rebuild it.
+        if (mPlayer != null && mMusiclessOn != com.newtube.mobile.player.MusiclessPrefs.isOn(this)) {
+            restartEngine();
+        }
 
         PlayerTransitionBridge.LaunchSnapshot launch = PlayerTransitionBridge.take();
 

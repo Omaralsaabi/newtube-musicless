@@ -215,7 +215,7 @@ opt-in execution flag is disabled; production packaging needs a separate decisio
 
 ## Enable and remaining limits
 
-Only debug `debug.arc.remove_music=1` wraps the stock sink; recreate the player.
+Settings > Player > Remove music (MusiclessPrefs, off by default) wraps the stock sink; the playback screen restarts its engine on resume when the setting changed.
 Use `adb -s <serial>` always; on this machine package is
 `io.github.aleixrodriala.arc.debug` (no release keystore), otherwise the release
 package. Clear the property afterwards; `grep -a Musicless` for NUL-containing logs.

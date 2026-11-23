@@ -176,6 +176,8 @@
     <string name="mobile_settings_sleep_timer">Temporizador</string>
     <string name="mobile_settings_sleep_timer_summary">Pausa %1$s después de abrir un vídeo</string>
     <string name="mobile_settings_audio_focus">Pausar con otros sonidos</string>
+    <string name="mobile_settings_remove_music">Quitar la música</string>
+    <string name="mobile_settings_remove_music_summary">Reproduce solo las voces, separadas en este dispositivo. Experimental: usa más batería y memoria, y el vídeo espera mientras se preparan las voces</string>
     <string name="mobile_settings_audio_focus_summary">Pausa con las llamadas y el audio de otras apps. Se aplica al próximo vídeo que abras</string>
     <string name="mobile_settings_resume">Continuar</string>
     <string name="mobile_settings_resume_short">Continuar vídeos cortos</string>

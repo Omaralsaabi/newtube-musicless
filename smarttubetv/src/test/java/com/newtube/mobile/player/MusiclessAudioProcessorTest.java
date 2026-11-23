@@ -18,7 +18,7 @@ import static org.junit.Assert.*;
 @ConscryptMode(ConscryptMode.Mode.OFF)
 public class MusiclessAudioProcessorTest {
     @Test public void optInSinkRefusesPassthroughAndOffload() {
-        org.robolectric.shadows.ShadowSystemProperties.override("debug.arc.remove_music", "1");
+        MusiclessPrefs.setOn(RuntimeEnvironment.getApplication(), true);
         try {
             androidx.media3.exoplayer.audio.AudioSink sink =
                     new Media3PlayerInitializer.PrerollRenderersFactory(
@@ -36,7 +36,7 @@ public class MusiclessAudioProcessorTest {
                     C.ENCODING_PCM_16BIT, androidx.media3.common.Format.NO_VALUE, 48000)));
             sink.reset();
         } finally {
-            org.robolectric.shadows.ShadowSystemProperties.override("debug.arc.remove_music", "");
+            MusiclessPrefs.setOn(RuntimeEnvironment.getApplication(), false);
         }
     }
 

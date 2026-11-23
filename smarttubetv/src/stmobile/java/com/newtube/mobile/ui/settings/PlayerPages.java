@@ -139,6 +139,11 @@ final class PlayerPages {
                 context.getString(R.string.mobile_settings_audio_focus_summary),
                 tweaks::isAudioFocusEnabled, tweaks::setAudioFocusEnabled));
 
+        rows.add(SettingsRow.toggle(context.getString(R.string.mobile_settings_remove_music),
+                context.getString(R.string.mobile_settings_remove_music_summary),
+                () -> com.newtube.mobile.player.MusiclessPrefs.isOn(context),
+                on -> com.newtube.mobile.player.MusiclessPrefs.setOn(context, on)));
+
         rows.add(SettingsRow.header(context.getString(R.string.mobile_settings_resume)));
         rows.add(SettingsRow.toggle(context.getString(R.string.mobile_settings_resume_short),
                 context.getString(R.string.mobile_settings_resume_short_summary),
