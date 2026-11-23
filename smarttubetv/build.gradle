@@ -405,6 +405,8 @@ dependencies {
     // exoplayer-amzn-2.10.6 fork was deleted in the phone-only port (the shared
     // FormatItem/MediaTrack DTO layer is engine-neutral now). 1.10.1 needs compileSdk 35+
     // (we build against 37) and AGP 8.1+. Keep in sync with doubletapplayerview-media3.
+    // Musicless feasibility prototype; enable only with debug.arc.remove_music=1 in debug builds.
+    stmobileImplementation 'com.microsoft.onnxruntime:onnxruntime-android:1.32.0'
     stmobileImplementation 'androidx.media3:media3-exoplayer:' + media3Version
     stmobileImplementation 'androidx.media3:media3-exoplayer-dash:' + media3Version
     stmobileImplementation 'androidx.media3:media3-exoplayer-hls:' + media3Version

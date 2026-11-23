@@ -481,6 +481,44 @@ public class Media3PlayerInitializer {
         private static int sDebugDecoderFailuresLeft = 4;
 
         @Override
+        protected androidx.media3.exoplayer.audio.AudioSink buildAudioSink(Context context,
+                boolean enableFloatOutput, boolean enableAudioOutputPlaybackParams) {
+            if (!com.liskovsoft.smartyoutubetv2.tv.BuildConfig.DEBUG
+                    || !"1".equals(DebugMediaShaper.prop("debug.arc.remove_music"))) {
+                return super.buildAudioSink(context, enableFloatOutput, enableAudioOutputPlaybackParams);
+            }
+            NetPath.log("musicless enabled: prototype delayed vocals; VOD only, no A/V clock hold");
+            androidx.media3.exoplayer.audio.AudioSink sink =
+                    new androidx.media3.exoplayer.audio.DefaultAudioSink.Builder(context)
+                            .setEnableFloatOutput(false)
+                            .setAudioProcessors(new androidx.media3.common.audio.AudioProcessor[] {
+                                    new MusiclessAudioProcessor(context)})
+                            .build();
+            // Refuse encoded input so the renderer cannot bypass decoding or the processor.
+            return new androidx.media3.exoplayer.audio.ForwardingAudioSink(sink) {
+                @Override
+                public boolean supportsFormat(androidx.media3.common.Format format) {
+                    return getFormatSupport(format) != SINK_FORMAT_UNSUPPORTED;
+                }
+
+                @Override
+                public int getFormatSupport(androidx.media3.common.Format format) {
+                    return androidx.media3.common.MimeTypes.AUDIO_RAW.equals(format.sampleMimeType)
+                            ? super.getFormatSupport(format) : SINK_FORMAT_UNSUPPORTED;
+                }
+
+                @Override
+                public androidx.media3.exoplayer.audio.AudioOffloadSupport getFormatOffloadSupport(
+                        androidx.media3.common.Format format) {
+                    return androidx.media3.exoplayer.audio.AudioOffloadSupport.DEFAULT_UNSUPPORTED;
+                }
+
+                @Override
+                public void setOffloadMode(int mode) { super.setOffloadMode(OFFLOAD_MODE_DISABLED); }
+            };
+        }
+
+        @Override
         protected void buildAudioRenderers(Context context, int extensionRendererMode,
                 androidx.media3.exoplayer.mediacodec.MediaCodecSelector mediaCodecSelector,
                 boolean enableDecoderFallback, androidx.media3.exoplayer.audio.AudioSink audioSink,
