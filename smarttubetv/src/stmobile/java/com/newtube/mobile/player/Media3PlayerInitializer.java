@@ -325,6 +325,7 @@ public class Media3PlayerInitializer {
     /** The debug-only offline fixture opts in explicitly without altering any global property. */
     ExoPlayer createPlayer(DefaultTrackSelector trackSelector, BandwidthMeter bandwidthMeter,
             boolean enablePreloading) {
+        if (MusiclessPrefs.isOn(mContext)) MusiclessModelHolder.preload(mContext);
         LoadControl loadControl = createPlayerLoadControl();
         mPreloadManagerBuilder = null;
         mPreloadTrackSelector = null;

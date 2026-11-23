@@ -1079,6 +1079,7 @@ public class MobileMainApplication extends MainApplication {
     @Override
     public void onTrimMemory(int level) {
         super.onTrimMemory(level);
+        com.newtube.mobile.player.MusiclessModelHolder.trimMemory(level);
 
         if (level >= TRIM_MEMORY_RUNNING_LOW) {
             if (level != TRIM_MEMORY_UI_HIDDEN) {
@@ -1091,6 +1092,7 @@ public class MobileMainApplication extends MainApplication {
     @Override
     public void onLowMemory() {
         super.onLowMemory();
+        com.newtube.mobile.player.MusiclessModelHolder.trimMemory(TRIM_MEMORY_COMPLETE);
 
         SessionWarmup.onMemoryPressure();
         VideoInfoService.releaseSigRuntime();

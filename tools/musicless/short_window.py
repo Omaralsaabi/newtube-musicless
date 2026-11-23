@@ -46,7 +46,7 @@ else:
 x, rate = sf.read(args.clip, dtype='float32', always_2d=True)
 assert rate == reference.RATE and x.shape[1] == 2
 baseline = None
-for frames in (512, 256, 128):
+for frames in (512, 256, 128, 64):
     reference.FRAMES = frames
     reference.WINDOW = frames * reference.HOP
     reference._INDEX = np.arange(frames + 1)[:, None] * reference.HOP + np.arange(reference.N_FFT)[None, :]

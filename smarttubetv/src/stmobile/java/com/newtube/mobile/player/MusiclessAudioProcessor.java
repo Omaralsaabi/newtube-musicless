@@ -10,7 +10,6 @@ import java.util.ArrayDeque;
 import java.util.Collections;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import ai.onnxruntime.OnnxTensor;
 import ai.onnxruntime.OrtEnvironment;
@@ -19,7 +18,7 @@ import ai.onnxruntime.OrtSession;
 /** Opt-in, bounded, sample-aligned separation experiment. */
 final class MusiclessAudioProcessor extends BaseAudioProcessor {
     private static final String TAG = "Musicless";
-    static final int FIRST_FRAMES = 128, FIRST_WINDOW = FIRST_FRAMES * MusiclessDsp.HOP;
+    static final int FIRST_FRAMES = 64, FIRST_WINDOW = FIRST_FRAMES * MusiclessDsp.HOP;
     static final int FIRST_STRIDE = FIRST_WINDOW - MusiclessDsp.OVERLAP;
     private final Context context;
     private final AtomicInteger generation = new AtomicInteger();
@@ -34,6 +33,10 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
     private boolean draining;
     private Executor executor;
     private Worker worker;
+    private boolean acquired;
+    private volatile boolean waitingForDownload;
+    volatile long inputReadyNs, waitModelMs, inferMs;
+    void beginHold() { inputReadyNs = 0; waitModelMs = inferMs = 0; }
 
     MusiclessAudioProcessor(Context context) { this.context = context.getApplicationContext(); }
 
@@ -54,6 +57,14 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
 
     @Override
     public void queueInput(ByteBuffer buffer) {
+        if (waitingForDownload && emittedFrames == receivedFrames
+                && MusiclessModels.get(context).status == MusiclessModels.Status.READY) {
+            waitingForDownload = failed = false;
+            submittedFrames = receivedFrames;
+            generation.incrementAndGet();
+            filled = 0; window = FIRST_WINDOW;
+            java.util.Arrays.fill(input, 0);
+        }
         double step = inputAudioFormat.sampleRate / (double) MusiclessDsp.RATE;
         while (buffer.remaining() >= inputAudioFormat.bytesPerFrame) {
             // Count completed outputs too: a fast worker must not decode the entire movie ahead.
@@ -76,6 +87,7 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
     }
 
     private void submitWindow(int outputFrames) {
+        if (inputReadyNs == 0) inputReadyNs = System.nanoTime();
         float[] block = window == MusiclessDsp.WINDOW ? input : java.util.Arrays.copyOf(input, window * 2);
         input = new float[MusiclessDsp.WINDOW * 2];
         System.arraycopy(block, block.length - MusiclessDsp.OVERLAP * 2, input, 0, MusiclessDsp.OVERLAP * 2);
@@ -86,11 +98,14 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
         AtomicInteger count = outstanding;
         count.incrementAndGet();
         Worker target = worker;
+        long submittedNs = System.nanoTime();
         executor.execute(() -> {
             boolean published = false;
             try {
                 if (generation.get() != token || failed) return;
+                long queueMs = (System.nanoTime() - submittedNs) / 1000000;
                 float[] vocals = target.separate(block, token, outputFrames);
+                waitModelMs += queueMs;
                 synchronized (ready) {
                     if (generation.get() == token && !failed) {
                         ready.add(vocals);
@@ -110,6 +125,7 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
     private void fail(Throwable error) {
         synchronized (ready) {
             failed = true;
+            waitingForDownload = context != null && MusiclessModels.get(context).status != MusiclessModels.Status.READY;
             outstanding.addAndGet(-ready.size());
             ready.clear();
         }
@@ -159,12 +175,16 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
         }
         filled = 0; window = FIRST_WINDOW;
         sourceFrame = receivedFrames = submittedFrames = emittedFrames = 0; nextSample = 0;
-        previousLeft = previousRight = 0; failed = false; draining = false;
+        previousLeft = previousRight = 0; failed = waitingForDownload = false; draining = false;
         java.util.Arrays.fill(input, 0);
         // shortcut: grid is flush-relative; media-zero windows also need pre-seek context samples.
         if (executor == null) {
             worker = new OrtWorker();
-            executor = Executors.newSingleThreadExecutor(r -> new Thread(r, "Musicless-ORT"));
+            executor = MusiclessModelHolder.get().executor;
+        }
+        if (context != null && !acquired) {
+            MusiclessModelHolder.get().acquire();
+            acquired = true;
         }
     }
 
@@ -179,9 +199,10 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
         if (executor != null) {
             Worker old = worker;
             executor.execute(old::close);
-            if (executor instanceof ExecutorService) ((ExecutorService) executor).shutdown();
+            if (context == null && executor instanceof ExecutorService) ((ExecutorService) executor).shutdown();
             executor = null; worker = null;
         }
+        if (acquired) { MusiclessModelHolder.get().release(); acquired = false; }
     }
 
     abstract static class Worker {
@@ -214,28 +235,12 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
     private final class OrtWorker extends Worker {
         MusiclessDsp fullDsp, firstDsp;
         float[] mask;
-        OrtSession vocals, accompaniment;
-
         @Override float[] infer(float[] block) throws Exception {
-            if (vocals == null || accompaniment == null) {
-                close(); vocals = accompaniment = null;
-                long start = System.nanoTime();
-                // Atomic publication prevents an interrupted copy from becoming a model next run.
-                try (OrtSession.SessionOptions options = new OrtSession.SessionOptions()) {
-                    options.setIntraOpNumThreads(2);
-                    options.setCPUArenaAllocator(false);
-                    options.setMemoryPatternOptimization(false);
-                    options.addConfigEntry("session.intra_op.allow_spinning", "0");
-                    options.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.BASIC_OPT);
-                    options.setInterOpNumThreads(1);
-                    options.setSymbolicDimensionValue("num_splits", 1);
-                    OrtEnvironment environment = OrtEnvironment.getEnvironment();
-                    environment.setTelemetry(false);
-                    vocals = environment.createSession(modelPath("vocals", "bcc04a15", 39318331L), options);
-                    accompaniment = environment.createSession(modelPath("accompaniment", "51671652", 39318338L), options);
-                }
-                Log.i(TAG, "Model loaded ms=" + (System.nanoTime() - start) / 1000000);
-            }
+            MusiclessModelHolder holder = MusiclessModelHolder.get();
+            long wait = System.nanoTime();
+            holder.load(MusiclessModels.get(context));
+            waitModelMs = (System.nanoTime() - wait) / 1000000;
+            OrtSession vocals = holder.vocals, accompaniment = holder.accompaniment;
             long start = System.nanoTime();
             int frames = block.length / (2 * MusiclessDsp.HOP);
             MusiclessDsp dsp;
@@ -260,32 +265,9 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
                 }
             }
             float[] output = dsp.synthesize(analysis[0], mask);
-            Log.i(TAG, "Window pipeline ms=" + (System.nanoTime() - start) / 1000000);
+            inferMs = (System.nanoTime() - start) / 1000000;
             return output;
         }
 
-        private String modelPath(String stem, String hash, long size) throws java.io.IOException {
-            java.io.File model = new java.io.File(context.getCacheDir(), "musicless-" + hash + ".onnx");
-            if (!model.isFile() || model.length() != size) {
-                java.io.File partial = java.io.File.createTempFile("musicless-", ".onnx", context.getCacheDir());
-                try {
-                    try (java.io.InputStream asset = context.getAssets().open("musicless/" + stem + ".onnx");
-                            java.io.OutputStream file = new java.io.FileOutputStream(partial)) {
-                        byte[] chunk = new byte[16384];
-                        for (int count; (count = asset.read(chunk)) != -1;) file.write(chunk, 0, count);
-                    }
-                    if (!partial.renameTo(model)) throw new java.io.IOException("Model publication failed");
-                } finally { partial.delete(); }
-            }
-            return model.getAbsolutePath();
-        }
-
-        @Override void close() {
-            for (OrtSession session : new OrtSession[] {vocals, accompaniment}) {
-                if (session != null) {
-                    try { session.close(); } catch (Exception error) { Log.e(TAG, "Close failed", error); }
-                }
-            }
-        }
     }
 }

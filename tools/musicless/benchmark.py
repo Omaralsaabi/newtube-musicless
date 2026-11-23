@@ -24,7 +24,8 @@ parser.add_argument('--compare')
 parser.add_argument('--arena-off', action='store_true', help='Disable CPU arena and memory patterns')
 parser.add_argument('--spinning-off', action='store_true')
 parser.add_argument('--optimization', choices=['basic', 'all'], default='all')
-parser.add_argument('--separate-models', help='Directory containing vocals.onnx and accompaniment.onnx')
+parser.add_argument('--separate-models', help='Directory containing vocals/accompaniment models')
+parser.add_argument('--extension', default='onnx', choices=['onnx', 'ort'])
 args = parser.parse_args()
 x, rate = sf.read(args.clip, dtype='float32', always_2d=True)
 assert rate == reference.RATE and x.shape[1] == 2 and np.isfinite(x).all()
@@ -48,7 +49,7 @@ if args.separate_models:
         def __init__(self):
             self.sessions = [ort.InferenceSession(str(Path(args.separate_models) / name), options,
                             providers=['CPUExecutionProvider'])
-                             for name in ('vocals.onnx', 'accompaniment.onnx')]
+                             for name in (f'vocals.{args.extension}', f'accompaniment.{args.extension}')]
 
         def run(self, _, inputs):
             v, a = [session.run(None, {session.get_inputs()[0].name: inputs['x']})[0]
