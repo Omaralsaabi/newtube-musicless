@@ -32,7 +32,9 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
     @Override public int getFormatSupport(Format format) {
         return MimeTypes.AUDIO_RAW.equals(format.sampleMimeType)
                 && format.pcmEncoding == C.ENCODING_PCM_16BIT
-                && format.channelCount >= 1 && format.channelCount <= 2
+                // DASH/SABR audio formats leave channelCount unset; configure() checks the decoder output.
+                && (format.channelCount == Format.NO_VALUE
+                        || (format.channelCount >= 1 && format.channelCount <= 2))
                 ? SINK_FORMAT_SUPPORTED_DIRECTLY : SINK_FORMAT_UNSUPPORTED;
     }
 
@@ -44,7 +46,7 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
 
     @Override public void configure(Format format, int specifiedBufferSize, int[] outputChannels)
             throws ConfigurationException {
-        if (!supportsFormat(format)) throw new ConfigurationException("Musicless requires PCM16 mono/stereo", format);
+        if (!supportsFormat(format) || format.channelCount == Format.NO_VALUE) throw new ConfigurationException("Musicless requires PCM16 mono/stereo", format);
         bufferSize = specifiedBufferSize;
         pendingFormat = format;
         if (inputFormat == null) applyFormat();

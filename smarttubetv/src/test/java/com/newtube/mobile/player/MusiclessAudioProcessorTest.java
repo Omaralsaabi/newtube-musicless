@@ -31,6 +31,9 @@ public class MusiclessAudioProcessorTest {
                     sink.getFormatSupport(aac));
             assertSame(androidx.media3.exoplayer.audio.AudioOffloadSupport.DEFAULT_UNSUPPORTED,
                     sink.getFormatOffloadSupport(aac));
+            // MediaCodecAudioRenderer asks with the manifest channel count, which DASH/SABR leave unset.
+            assertTrue(sink.supportsFormat(androidx.media3.common.util.Util.getPcmFormat(
+                    C.ENCODING_PCM_16BIT, androidx.media3.common.Format.NO_VALUE, 48000)));
             sink.reset();
         } finally {
             org.robolectric.shadows.ShadowSystemProperties.override("debug.arc.remove_music", "");
