@@ -943,7 +943,7 @@ public class PlayerData extends DataChangeBase implements PlayerConstants, Profi
         mLastSpeed = Helpers.parseFloat(split, 48, 1.0f);
         mRotationAngle = Helpers.parseInt(split, 49, 0);
         mZoomPercents = Helpers.parseInt(split, 50, -1);
-        mPlaybackMode = Helpers.parseInt(split, 51, PlayerConstants.PLAYBACK_MODE_ALL);
+        mPlaybackMode = Helpers.parseInt(split, 51, com.liskovsoft.smartyoutubetv2.common.BuildConfig.MUSICLESS_FORK ? PlayerConstants.PLAYBACK_MODE_PAUSE : PlayerConstants.PLAYBACK_MODE_ALL);
         mAudioLanguage = Helpers.parseStr(split, 52, LocaleUtility.getCurrentLanguage(mPrefs.getContext()));
         mSubtitleLanguage = Helpers.parseStr(split, 53, LocaleUtility.getCurrentLanguage(mPrefs.getContext()));
         mEnabledSubtitlesPerChannel = Helpers.parseStrList(split, 54);

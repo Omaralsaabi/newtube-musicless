@@ -726,7 +726,7 @@ public class PlayerTweaksData implements ProfileChangeListener {
         // Buffering fix was there.
         mIsAltPresetsEnabled = Helpers.parseBoolean(split, 15, false);
         mIsRememberPositionOfShortVideosEnabled = Helpers.parseBoolean(split, 16, false);
-        mIsSuggestionsDisabled = Helpers.parseBoolean(split, 17, false);
+        mIsSuggestionsDisabled = Helpers.parseBoolean(split, 17, com.liskovsoft.smartyoutubetv2.common.BuildConfig.MUSICLESS_FORK);
         mIsAvcOverVp9Preferred = Helpers.parseBoolean(split, 18, false);
         mIsChatPlacedLeft = Helpers.parseBoolean(split, 19, false);
         mIsRealChannelIconEnabled = Helpers.parseBoolean(split, 20, true);

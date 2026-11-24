@@ -167,7 +167,9 @@ public class MobileMainApplication extends MainApplication {
         // global exception handler and every other View->Activity mapping.
         super.onCreate();
         // Schedules legacy bundled-model cache cleanup once, even when separation is off.
-        com.newtube.mobile.player.MusiclessModels.get(this);
+        com.newtube.mobile.player.MusiclessModels models = com.newtube.mobile.player.MusiclessModels.get(this);
+        // On by default in the fork build: fetch the voice models before the first video needs them.
+        if (com.newtube.mobile.player.MusiclessPrefs.isOn(this)) models.start();
 
         // Release-visible launch milestones + the "first frame drawn" hook used below.
         LaunchMilestones.install(this);

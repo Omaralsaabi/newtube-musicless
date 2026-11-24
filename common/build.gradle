@@ -18,6 +18,8 @@ android {
     testOptions.unitTests.includeAndroidResources = true
 
     defaultConfig {
+        // Musicless fork defaults (see smarttubetv/build.gradle -PforkAppId).
+        buildConfigField "boolean", "MUSICLESS_FORK", project.hasProperty("forkAppId") ? "true" : "false"
         minSdk = project.ext.minSdkVersion
         targetSdk = project.ext.targetSdkVersion
         versionCode 10

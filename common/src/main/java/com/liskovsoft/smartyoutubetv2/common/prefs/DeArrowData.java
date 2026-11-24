@@ -36,7 +36,7 @@ public class DeArrowData extends DataSaverBase {
     }
 
     public boolean isReplaceThumbnailsEnabled() {
-        return getBoolean(2);
+        return getBoolean(2, com.liskovsoft.smartyoutubetv2.common.BuildConfig.MUSICLESS_FORK); // fork: video frames instead of uploader thumbnails
     }
 
     public void setReplaceThumbnailsEnabled(boolean replace) {

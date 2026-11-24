@@ -5,7 +5,7 @@ import android.content.SharedPreferences;
 
 /**
  * Musicless prototype switch: separate the voices from the audio and play them instead of the
- * original track. Off by default. The audio sink is built with the player, so the playback screen
+ * original track. Off by default, on in the Musicless fork build. The audio sink is built with the player, so the playback screen
  * restarts its engine when it resumes with a different value (MobilePlaybackActivity.onResume).
  */
 public final class MusiclessPrefs {
@@ -21,7 +21,7 @@ public final class MusiclessPrefs {
     }
 
     public static boolean isOn(Context context) {
-        return prefs(context).getBoolean(KEY_REMOVE_MUSIC, false);
+        return prefs(context).getBoolean(KEY_REMOVE_MUSIC, com.liskovsoft.smartyoutubetv2.tv.BuildConfig.MUSICLESS_FORK);
     }
 
     public static void setOn(Context context, boolean on) {
