@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mobile_settings_search_hint">البحث في الإعدادات</string>
+    <string name="mobile_settings_search_none">لا توجد إعدادات تطابق “%1$s”</string>
+    <string name="mobile_settings_search_kw_account">تسجيل الدخول تسجيل الخروج حساب google الملف الشخصي تبديل</string>
+    <string name="mobile_settings_search_kw_theme">الوضع الداكن الوضع الفاتح ليلي المظهر السمة الألوان</string>
+    <string name="mobile_settings_search_kw_pure_black">amoled oled أسود الوضع الداكن ليلي البطارية</string>
+    <string name="mobile_settings_search_kw_country">البلد الدولة المنطقة</string>
+    <string name="mobile_settings_search_kw_start_screen">التشغيل البدء الفتح علامة التبويب الافتراضية الصفحة الرئيسية</string>
+    <string name="mobile_settings_search_kw_interface_size">الواجهة التكبير التصغير الخط حجم النص الكثافة أكبر أصغر</string>
+    <string name="mobile_settings_search_kw_tabs">الشريط السفلي الأقسام التنقل استكشاف</string>
+    <string name="mobile_settings_search_kw_hidden">إخفاء تمت مشاهدته فلترة تصفية القادمة العروض الأولى بث مباشر</string>
+    <string name="mobile_settings_search_kw_video_menu">قائمة السياق النقاط الثلاث ضغطة مطولة خيارات</string>
+    <string name="mobile_settings_search_kw_channels_order">الاشتراكات ترتيب فرز القنوات</string>
+    <string name="mobile_settings_search_kw_watch_history">إيقاف السجل سجل المشاهدة التصفح المتخفي</string>
+    <string name="mobile_settings_search_kw_video_ends">تشغيل تلقائي تكرار حلقة عشوائي الفيديو التالي</string>
+    <string name="mobile_settings_search_kw_background">التشغيل في الخلفية صورة داخل صورة pip الصوت فقط تصغير</string>
+    <string name="mobile_settings_search_kw_natural_voice">طبقة الصوت حدة السرعة تمديد الوقت صوت رفيع</string>
+    <string name="mobile_settings_search_kw_audio_focus">المكالمات الإشعارات التطبيقات الأخرى المقاطعة</string>
+    <string name="mobile_settings_search_kw_hide_related">الاقتراحات ذات صلة المقترحات التوصيات</string>
+    <string name="mobile_settings_search_kw_dislikes">return youtube dislike ryd عدم الإعجاب لا يعجبني</string>
+    <string name="mobile_settings_search_kw_quality">الدقة الجودة 4k 1080p 720p hd توفير البيانات بيانات الجوال</string>
+    <string name="mobile_settings_search_kw_loudness">مستوى الصوت توحيد الصوت تلقائي منخفض مرتفع عالي</string>
+    <string name="mobile_settings_search_kw_player_volume">منخفض مرتفع الصوت</string>
+    <string name="mobile_settings_search_kw_captions">الترجمة ترجمة مصاحبة cc الترجمة النصية</string>
+    <string name="mobile_settings_search_kw_sponsorblock">تخطي الرعاة الإعلانات المقاطع المقدمات</string>
+    <string name="mobile_settings_search_kw_dearrow">عناوين مضللة جذب النقرات العناوين الصور المصغرة</string>
+    <string name="mobile_settings_search_kw_backup">تصدير استيراد حفظ الإعدادات نسخ احتياطي استعادة</string>
+    <string name="mobile_settings_search_kw_video_format">الترميز codec vp9 av1 h264 avc hdr 60fps الصيغة</string>
+    <string name="mobile_settings_search_kw_buffer">التخزين المؤقت ذاكرة التخزين المؤقت الذاكرة</string>
+    <string name="mobile_settings_search_kw_dns">dns ipv4 ipv6 الخوادم</string>
+    <string name="mobile_settings_search_kw_conscrypt">ssl tls الشهادات الأمان الحجب الرقابة محجوب byebyedpi</string>
+    <string name="mobile_settings_search_kw_multi_profiles">الملفات الشخصية لكل حساب خاص مختلف</string>
+    <string name="mobile_settings_search_kw_updates">تحديث الإصدار إصدار جديد</string>
+    <string name="mobile_settings_search_kw_diagnostic_log">الإبلاغ عن خطأ مشكلة السجلات تصحيح الأخطاء</string>
+    <string name="mobile_settings_search_kw_gesture_levels">الإيماءات السطوع مستوى الصوت</string>
+    <string name="mobile_settings_search_kw_gesture_seek">الإيماءات التنقل تخطي تقديم ترجيع</string>
+</resources>
