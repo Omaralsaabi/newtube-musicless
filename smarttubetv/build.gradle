@@ -141,6 +141,8 @@ android {
 
     buildFeatures {
         buildConfig = true
+        // Only the Musicless fork release renames the app; other builds stay byte-identical (F-Droid twin).
+        resValues = project.hasProperty("appIdSuffix")
     }
 
     // NEWTUBE(fdroid): no "Dependency metadata" block in the APK signing block. AGP adds it for
@@ -218,6 +220,13 @@ android {
 
             if (keystorePropertiesFile.exists()) {
                 signingConfig signingConfigs.release
+            }
+            // Musicless fork release (-PappIdSuffix=.musicless -PversionNameSuffix=-musicless.1): its own
+            // app id and name, so it installs next to official NewTube instead of clashing with its key.
+            if (project.hasProperty("appIdSuffix")) {
+                applicationIdSuffix project.property("appIdSuffix")
+                versionNameSuffix project.findProperty("versionNameSuffix") ?: ""
+                resValue "string", "app_name", "NewTube Musicless"
             }
         }
         // Use same key for release and debug for testing
