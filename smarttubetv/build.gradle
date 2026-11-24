@@ -173,7 +173,9 @@ android {
         buildConfigField "boolean", "BENCHMARK", "false"
         // NEWTUBE(fdroid): -Pfdroid turns the in-app updater off - F-Droid delivers the updates, and
         // its inclusion policy forbids self-updates that aren't an explicit opt-in.
-        buildConfigField "boolean", "IN_APP_UPDATES", project.hasProperty('fdroid') || project.hasProperty('forkAppId') ? "false" : "true"
+        // The Musicless fork updates only from its own feed (-PforkUpdateUrl), never from NewTube's.
+        buildConfigField "boolean", "IN_APP_UPDATES", project.hasProperty('fdroid')
+                || project.hasProperty('forkAppId') && !project.hasProperty('forkUpdateUrl') ? "false" : "true"
 
         // The content of Universal apk
         ndk {
@@ -311,12 +313,12 @@ android {
             // arch-"n" launcher mark (Catalan for "arch"). This ID is permanent once released;
             // do not couple it to the marketing name. See docs/gtm + the legal-risk memo.
             applicationId "io.github.aleixrodriala.arc"
-            // Musicless fork (-PforkAppId=io.github.yshalsager.newtube.musicless -PversionNameSuffix=-musicless.1):
-            // its own app id and name next to official NewTube, its own defaults, no NewTube updater.
+            // Musicless fork (-PforkAppId=<id> -PforkBuild=<n> [-PforkUpdateUrl=<manifest url>]): its own
+            // app id and name next to official NewTube, its own defaults and update feed.
             buildConfigField "boolean", "MUSICLESS_FORK", project.hasProperty("forkAppId") ? "true" : "false"
+            buildConfigField "String", "FORK_UPDATE_URL", groovy.json.JsonOutput.toJson(project.findProperty("forkUpdateUrl") ?: "")
             if (project.hasProperty("forkAppId")) {
                 applicationId project.property("forkAppId")
-                versionNameSuffix project.findProperty("versionNameSuffix") ?: ""
                 resValue "string", "app_name", "NewTube Musicless"
             }
             minSdk = 24 // media3 1.10.x floor is 23; 24 = project-wide minimum
@@ -327,6 +329,12 @@ android {
             // 1.0.0 -> 10000, 1.0.1 -> 10001, 1.1.0 -> 10100, 2.0.0 -> 20000.
             versionCode 11701
             versionName "1.17.1"
+            if (project.hasProperty("forkAppId")) {
+                // Fork builds count up within an upstream version: 1.17.1 build 2 -> 1170102, 1.17.1-musicless.2.
+                int forkBuild = (project.findProperty("forkBuild") ?: "1") as int
+                versionCode = versionCode * 100 + forkBuild
+                versionNameSuffix "-musicless." + forkBuild
+            }
         }
     }
 }

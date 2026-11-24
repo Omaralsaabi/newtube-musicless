@@ -145,6 +145,7 @@ public final class AppUpdates implements AppUpdateCheckerListener {
             return new String[] {override};
         }
 
+        if (BuildConfig.MUSICLESS_FORK) return new String[] {BuildConfig.FORK_UPDATE_URL};
         return context.getResources().getStringArray(R.array.update_urls);
     }
 
