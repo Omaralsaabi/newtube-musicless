@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NewTube Musicless | يوتيوب بلا موسيقى</title>
+<meta name="description" content="تطبيق أندرويد مجاني ومفتوح المصدر يُزيل الموسيقى من فيديوهات يوتيوب على هاتفك ويُبقي الأصوات.">
+<meta property="og:title" content="NewTube Musicless | يوتيوب بلا موسيقى">
+<meta property="og:description" content="يُزيل الموسيقى من الفيديوهات ويُبقي الأصوات، على هاتفك مباشرة.">
+<meta property="og:image" content="icon.png">
+<meta name="theme-color" content="#0E6B52">
+<link rel="icon" href="icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700&display=swap">
+<style>
+  :root {
+    --bg: #F6F8F7; --surface: #FFFFFF; --text: #14201C; --muted: #52625C;
+    --brand: #0E6B52; --brand-dark: #0A5340; --gold: #C99A1E; --line: #DCE5E1;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0D1613; --surface: #15211D; --text: #E8EFEC; --muted: #9DB0A8;
+            --brand: #2FA27F; --brand-dark: #0E6B52; --gold: #F4C542; --line: #24352F; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text); line-height: 1.8;
+    font-family: "Tajawal", "Noto Sans Arabic", "Noto Naskh Arabic", "Segoe UI", Tahoma, "Geeza Pro", system-ui, sans-serif;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 0 16px; }
+  a { color: var(--brand); }
+  header.hero {
+    background: linear-gradient(135deg, #0E6B52 0%, #0A5340 100%); color: #fff;
+    padding: 56px 0 48px; text-align: center;
+  }
+  .hero img { width: 104px; height: 104px; border-radius: 24px; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
+  .hero h1 { margin: 16px 0 0; font-size: 2.1rem; letter-spacing: 0; direction: ltr; }
+  .hero .tag { font-size: 1.5rem; margin: 4px 0 8px; font-weight: 700; }
+  .hero p.lead { margin: 0 auto 24px; max-width: 34em; opacity: .92; font-size: 1.05rem; }
+  .downloads { max-width: 560px; margin: 0 auto; display: grid; gap: 10px; }
+  .dl-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .dl {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 10px 12px; border-radius: 12px; text-decoration: none; color: #fff;
+    border: 1.5px solid rgba(255,255,255,.55); line-height: 1.5;
+  }
+  .dl:hover { background: rgba(255,255,255,.08); }
+  .dl.primary { background: #F4C542; color: #14201C; border-color: #F4C542; padding: 14px 16px; }
+  .dl.primary:hover { background: #F7D06A; }
+  .dl-title { font-weight: 700; font-size: 1rem; }
+  .dl.primary .dl-title { font-size: 1.2rem; }
+  .dl-sub { font-size: .82rem; opacity: .85; }
+  .size { display: block; direction: ltr; unicode-bidi: isolate; white-space: nowrap; font-size: .78rem; opacity: .8; }
+  .version { margin-top: 12px; font-size: .9rem; opacity: .85; min-height: 1.6em; }
+  section { padding: 44px 0 8px; }
+  h2 { font-size: 1.5rem; margin: 0 0 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+  .card h3 { margin: 0 0 4px; font-size: 1.1rem; color: var(--brand); }
+  .card p { margin: 0; color: var(--muted); }
+  ol.steps { padding-inline-start: 1.4em; margin: 0; }
+  ol.steps li { margin-bottom: 8px; }
+  .note { background: var(--surface); border: 1px solid var(--line); border-inline-start: 4px solid var(--gold);
+          border-radius: 10px; padding: 14px 18px; color: var(--muted); }
+  .note ul { margin: 0; padding-inline-start: 1.2em; }
+  details { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; margin-bottom: 10px; }
+  summary { cursor: pointer; font-weight: 700; }
+  details p { margin: 8px 0 0; color: var(--muted); }
+  .ltr { direction: ltr; unicode-bidi: isolate; }
+  footer { margin-top: 48px; padding: 28px 0 40px; border-top: 1px solid var(--line); color: var(--muted); font-size: .92rem; }
+  footer ul { padding-inline-start: 1.2em; margin: 8px 0 16px; }
+  @media (max-width: 480px) {
+    .hero h1 { font-size: 1.7rem; } .hero .tag { font-size: 1.25rem; }
+    .dl-row { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <img src="icon.png" alt="أيقونة NewTube Musicless">
+    <h1>NewTube Musicless</h1>
+    <div class="tag">يوتيوب على هاتفك… بلا موسيقى</div>
+    <p class="lead">تطبيق أندرويد مجاني ومفتوح المصدر يُزيل الموسيقى من الفيديوهات ويُبقي الأصوات،
+      وكل ذلك يجري على هاتفك مباشرة.</p>
+    <div class="downloads">
+      <a class="dl primary" data-abi="arm64-v8a" href="https://github.com/yshalsager/newtube-musicless/releases/latest">
+        <span class="dl-title">تنزيل للهواتف الحديثة</span>
+        <span class="dl-sub">موصى به لمعظم الهواتف <span class="size"></span></span></a>
+      <div class="dl-row">
+        <a class="dl" data-abi="armeabi-v7a" href="https://github.com/yshalsager/newtube-musicless/releases/latest">
+          <span class="dl-title">الهواتف الأقدم</span>
+          <span class="dl-sub">أجهزة 32 بت <span class="size"></span></span></a>
+        <a class="dl" data-abi="universal" href="https://github.com/yshalsager/newtube-musicless/releases/latest">
+          <span class="dl-title">كل الأجهزة</span>
+          <span class="dl-sub">يعمل على أي جهاز، أكبر حجمًا <span class="size"></span></span></a>
+        <a class="dl" data-abi="x86" href="https://github.com/yshalsager/newtube-musicless/releases/latest">
+          <span class="dl-title">أجهزة Intel</span>
+          <span class="dl-sub">بعض الأجهزة اللوحية <span class="size"></span></span></a>
+      </div>
+    </div>
+    <div class="version" id="version">لأجهزة أندرويد 7.0 فأحدث</div>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section>
+    <h2>ماذا يقدّم؟</h2>
+    <div class="grid">
+      <div class="card"><h3>إزالة الموسيقى تلقائيًا</h3>
+        <p>يفصل التطبيق صوت كل فيديو إلى أصوات وموسيقى بنموذج ذكاء اصطناعي صغير، ويشغّل الأصوات فقط. تُشغّله وتُوقفه من الإعدادات أو من قائمة المشغّل.</p></div>
+      <div class="card"><h3>على هاتفك، بلا خوادم</h3>
+        <p>تتم المعالجة كلها على جهازك؛ لا يُرسَل أي صوت إلى أي خادم.</p></div>
+      <div class="card"><h3>إعدادات مناسبة من أول تشغيل</h3>
+        <p>واجهة عربية، بلا مقاطع Shorts ولا الصفحة الرئيسية، بلا اقتراحات «التالي»، وصور مصغّرة من لقطات الفيديو نفسه بدل صور الناشر.</p></div>
+      <div class="card"><h3>كل مزايا NewTube</h3>
+        <p>تسجيل دخول اختياري بحسابك، تشغيل في الخلفية، صورة داخل صورة، وحفظ الفيديوهات للمشاهدة دون اتصال.</p></div>
+      <div class="card"><h3>تحديثات تلقائية</h3>
+        <p>يُثبَّت بجانب NewTube الرسمي دون أن يستبدله، ويُبلغك بالإصدارات الجديدة من تلقاء نفسه.</p></div>
+      <div class="card"><h3>مجاني ومفتوح المصدر</h3>
+        <p>بلا إعلانات ولا اشتراكات، والشيفرة كاملة متاحة على GitHub.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>طريقة التثبيت</h2>
+    <ol class="steps">
+      <li>اضغط «تنزيل للهواتف الحديثة» أعلاه من هاتفك، وانتظر اكتمال تنزيل الملف.</li>
+      <li>افتح الملف، وإن طُلب منك فاسمح للمتصفح بتثبيت التطبيقات من مصادر غير معروفة.</li>
+      <li>افتح التطبيق؛ في أول تشغيل يُنزَّل نموذج الأصوات (نحو 35 ميغابايت) مرة واحدة، ويُستحسن أن يكون ذلك عبر Wi‑Fi.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>قبل أن تبدأ</h2>
+    <div class="note">
+      <ul>
+        <li>يُبقي التطبيق <strong>كل</strong> الأصوات البشرية، بما فيها الغناء؛ فالأغنية يبقى فيها صوت المغني.</li>
+        <li>يُزيل معظم الإيقاع مع الموسيقى، ومنه الدف.</li>
+        <li>يستهلك بطارية وذاكرة أكثر من التشغيل العادي، وقد يتأخر الصوت لحظات عند بدء الفيديو ريثما تُجهَّز الأصوات.</li>
+        <li>جُرِّب على الفيديوهات العادية؛ أما البث المباشر فلم يُختبر بعد.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>أسئلة شائعة</h2>
+    <details><summary>أي ملف أنزّل؟</summary>
+      <p>اختر «تنزيل للهواتف الحديثة»؛ فهو يناسب كل الهواتف تقريبًا من السنوات الأخيرة. إن رفض الهاتف تثبيته فجرّب «الهواتف الأقدم»، أو «كل الأجهزة» الذي يعمل في كل الأحوال لكنه أكبر حجمًا.</p></details>
+    <details><summary>هل أحتاج إلى حساب جوجل؟</summary>
+      <p>لا. تسجيل الدخول اختياري، ويتم برمز تكتبه في صفحة جوجل، دون إدخال كلمة المرور في التطبيق.</p></details>
+    <details><summary>هل يُرسَل صوت الفيديو إلى أي مكان؟</summary>
+      <p>لا. فصل الأصوات عن الموسيقى يجري كاملًا على هاتفك.</p></details>
+    <details><summary>هل هو تطبيق رسمي من يوتيوب؟</summary>
+      <p>لا. هو مشروع مستقل مبني على NewTube وSmartTube، ولا علاقة له بشركة جوجل أو يوتيوب.</p></details>
+    <details><summary>كيف أتأكد أن الملف أصلي؟</summary>
+      <p>كل إصدار يُبنى ويُوقَّع آليًا على GitHub من الشيفرة المنشورة، ومع كل ملف شهادة بناء يمكن التحقق منها. التفاصيل في صفحة المشروع.</p></details>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <strong>شكر وتقدير</strong>
+    <ul>
+      <li><a href="https://github.com/aleixrodriala/newtube">NewTube</a> و<a href="https://github.com/yuliskov/SmartTube">SmartTube</a>: التطبيق الذي بُني عليه هذا المشروع.</li>
+      <li><a href="https://github.com/ieasybooks/musicless">Musicless</a> من «الكتب المُيسّرة»: فكرة إزالة الموسيقى وطريقتها.</li>
+      <li><a href="https://github.com/deezer/spleeter">Spleeter</a> من Deezer و<a href="https://github.com/k2-fsa/sherpa-onnx">sherpa-onnx</a> و<a href="https://onnxruntime.ai">ONNX Runtime</a>: نموذج الفصل وتشغيله على الهاتف.</li>
+    </ul>
+    <p><a href="https://github.com/yshalsager/newtube-musicless">الشيفرة المصدرية على GitHub</a> ·
+      <a href="https://github.com/yshalsager/newtube-musicless#readme" lang="en" dir="ltr">English</a> ·
+      رخصة MIT</p>
+    <p>مشروع مستقل غير رسمي، لا يتبع جوجل ولا يوتيوب ولا مطوّري NewTube أو SmartTube، ولا يستضيف أي محتوى.</p>
+  </div>
+</footer>
+
+<script>
+  // Point the buttons straight at the latest release's APKs; the release page stays the fallback.
+  fetch("https://api.github.com/repos/yshalsager/newtube-musicless/releases/latest")
+    .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+    .then(function (rel) {
+      var links = document.querySelectorAll("a.dl[data-abi]");
+      for (var i = 0; i < links.length; i++) {
+        var suffix = "_" + links[i].getAttribute("data-abi") + ".apk";
+        var a = (rel.assets || []).filter(function (x) { return x.name.slice(-suffix.length) === suffix; })[0];
+        if (!a) continue;
+        links[i].href = a.browser_download_url;
+        links[i].querySelector(".size").textContent = Math.round(a.size / 1048576) + " MB";
+      }
+      var v = document.getElementById("version"), num = document.createElement("span");
+      num.className = "ltr";
+      num.textContent = rel.tag_name.replace(/^v/, "");
+      v.textContent = "الإصدار ";
+      v.appendChild(num);
+      v.appendChild(document.createTextNode(" · لأجهزة أندرويد 7.0 فأحدث"));
+    })
+    .catch(function () { /* keep the release-page links */ });
+</script>
+</body>
+</html>
