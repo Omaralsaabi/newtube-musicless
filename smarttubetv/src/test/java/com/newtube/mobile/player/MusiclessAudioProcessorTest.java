@@ -387,6 +387,42 @@ public class MusiclessAudioProcessorTest {
         }
     }
 
+    @Test(timeout = 10000) public void writeErrorDuringPendingDataPollIsThrownOnNextWrite() throws Exception {
+        androidx.media3.exoplayer.audio.AudioSink.WriteException failure =
+                new androidx.media3.exoplayer.audio.AudioSink.WriteException(-1, null, false);
+        int[] failed = {0};
+        java.util.ArrayDeque<Runnable> jobs = new java.util.ArrayDeque<>();
+        androidx.media3.exoplayer.audio.AudioSink track = (androidx.media3.exoplayer.audio.AudioSink)
+                java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
+                        new Class<?>[] {androidx.media3.exoplayer.audio.AudioSink.class}, (proxy, method, args) -> {
+                            // Fails once, like a track that recovers: only the deferred copy can report it.
+                            if (method.getName().equals("handleBuffer") && failed[0]++ == 0) throw failure;
+                            if (method.getName().equals("handleBuffer")) { ((ByteBuffer) args[0]).position(((ByteBuffer) args[0]).limit()); return true; }
+                            if (method.getReturnType() == boolean.class) return false;
+                            if (method.getReturnType() == int.class) return 0;
+                            if (method.getReturnType() == long.class) return 0L;
+                            return null;
+                        });
+        MusiclessAudioSink sink = new MusiclessAudioSink(track, new MusiclessAudioProcessor(identity(), jobs::add));
+        sink.configure(new androidx.media3.common.Format.Builder().setSampleMimeType("audio/raw")
+                .setPcmEncoding(C.ENCODING_PCM_16BIT).setSampleRate(44100).setChannelCount(2).build(), 0, null);
+        try {
+            sink.handleBuffer(pcm(MusiclessAudioProcessor.FIRST_WINDOW, 0), 0, 1);
+            jobs.remove().run();
+            sink.hasPendingData();
+            try {
+                sink.handleBuffer(ByteBuffer.allocateDirect(0).order(java.nio.ByteOrder.nativeOrder()), 0, 1);
+                org.junit.Assert.fail("Write error from the poll must not be lost");
+            } catch (androidx.media3.exoplayer.audio.AudioSink.WriteException error) {
+                assertEquals(failure, error);
+            }
+        } finally {
+            sink.reset();
+            while (!jobs.isEmpty()) jobs.remove().run();
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+        }
+    }
+
     @Test public void fullTrackReportingNoPendingDataIsNotAHold() throws Exception {
         boolean[] full = {false};
         java.util.ArrayDeque<Runnable> jobs = new java.util.ArrayDeque<>();
