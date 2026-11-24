@@ -8,7 +8,7 @@ For the prototype's history (rounds 1–5, measurements, dead ends) see [FEASIBI
 
 - **Repo:** [yshalsager/newtube-musicless](https://github.com/yshalsager/newtube-musicless), a GitHub
   fork of [aleixrodriala/newtube](https://github.com/aleixrodriala/newtube). The work lives on the
-  branch `yshalsager/musicless-proto`; `main` is NewTube's.
+  branch `musicless` (the default); `main` is NewTube's.
 - **What it adds:** on-device music removal ("Musicless"), a separate app identity, defaults for a
   Muslim audience, a full Arabic translation, and its own release/update pipeline.
 - **What it doesn't change:** everything else is NewTube (phone UI, player, downloads) on top of
@@ -126,7 +126,7 @@ In the fork's Actions settings, NewTube's `discord`, `virustotal_scan`, `update-
 
 ## Keeping up with NewTube
 
-1. Fetch NewTube's new release tag and merge (or rebase) it into `yshalsager/musicless-proto`.
+1. Fetch NewTube's new release tag and merge (or rebase) it into `musicless`.
    Conflicts are most likely in `MobilePlaybackActivity`, `Media3PlayerInitializer`,
    `MobileMainApplication`, `smarttubetv/build.gradle` and the `values-ar` files.
 2. Restart the fork build number at 1: `v1.17.2-musicless.1` → versionCode `1170201`, which is

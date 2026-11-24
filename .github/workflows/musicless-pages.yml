@@ -6,7 +6,7 @@ name: Publish Musicless site
 
 on:
   push:
-    branches: [yshalsager/musicless-proto]
+    branches: [musicless]
     paths:
       - "site/**"
       - ".github/workflows/musicless-pages.yml"
