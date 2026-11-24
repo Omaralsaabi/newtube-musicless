@@ -6,7 +6,8 @@ name: Build Musicless release
 # pre-release: the app reads releases/latest/download/musicless.json) is a manual step.
 #
 # The tag is <upstream versionName>-musicless.<fork build>; the fork build becomes -PforkBuild,
-# so versionCode = upstream code * 100 + build. The tag message's lines become the in-app changelog.
+# so versionCode = upstream code * 100 + build. The tag message's lines become the release notes and
+# in-app changelog: lines starting "ar: " are the Arabic ones, the rest English.
 #
 # Secrets, in the `musicless-release` environment: MUSICLESS_KEYSTORE_BASE64 (the .p12, base64),
 # MUSICLESS_KEYSTORE_PASSWORD (store and key password) and MUSICLESS_KEY_ALIAS.
@@ -60,8 +61,14 @@ jobs:
           echo "VERSION_CODE=$((code * 100 + build))" >> "$GITHUB_ENV"
           # The annotated tag's message (checkout fetched only the commit).
           git fetch --no-tags --depth=1 origin "+refs/tags/$TAG:refs/tags/$TAG"
-          git for-each-ref "refs/tags/$TAG" --format='%(contents)' | sed '/^-----BEGIN/,$d' | grep -v '^\s*$' > "$RUNNER_TEMP/notes.txt" || true
-          cat "$RUNNER_TEMP/notes.txt"
+          git for-each-ref "refs/tags/$TAG" --format='%(contents)' | sed '/^-----BEGIN/,$d' | grep -v '^\s*$' > "$RUNNER_TEMP/all.txt" || true
+          grep -v '^ar: ' "$RUNNER_TEMP/all.txt" > "$RUNNER_TEMP/notes.txt" || true
+          grep '^ar: ' "$RUNNER_TEMP/all.txt" | sed 's/^ar: //' > "$RUNNER_TEMP/notes_ar.txt" || true
+          # Release notes: English, then Arabic.
+          { sed 's/^/- /' "$RUNNER_TEMP/notes.txt"
+            if [ -s "$RUNNER_TEMP/notes_ar.txt" ]; then echo; echo '---'; echo; sed 's/^/- /' "$RUNNER_TEMP/notes_ar.txt"; fi
+          } > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
 
       - name: Set up JDK 21
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
@@ -132,6 +139,7 @@ jobs:
           set -euo pipefail
           notes=()
           while IFS= read -r line; do notes+=(--note "$line"); done < "$RUNNER_TEMP/notes.txt"
+          while IFS= read -r line; do notes+=(--note-ar "$line"); done < "$RUNNER_TEMP/notes_ar.txt"
           python3 tools/musicless_manifest.py --repo "$REPO" --tag "$TAG" --code "$VERSION_CODE" \
             --dist dist --out dist/musicless.json "${notes[@]}"
           cat dist/musicless.json
@@ -155,5 +163,5 @@ jobs:
             gh release upload "$TAG" dist/* --clobber
           else
             gh release create "$TAG" dist/* --draft --verify-tag --title "NewTube Musicless ${TAG#v}" \
-              --notes-file "$RUNNER_TEMP/notes.txt"
+              --notes-file "$RUNNER_TEMP/notes.md"
           fi
