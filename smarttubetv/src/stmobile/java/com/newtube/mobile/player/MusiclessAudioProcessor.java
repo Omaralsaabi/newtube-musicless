@@ -94,7 +94,8 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
         float[] block = window == MusiclessDsp.WINDOW ? input : java.util.Arrays.copyOf(input, window * 2);
         input = new float[MusiclessDsp.WINDOW * 2];
         System.arraycopy(block, block.length - MusiclessDsp.OVERLAP * 2, input, 0, MusiclessDsp.OVERLAP * 2);
-        window = MusiclessDsp.WINDOW;
+        // Ramp 64->128->256->512 frames: each window input+inference fits in the audio already queued.
+        window = Math.min(window * 2, MusiclessDsp.WINDOW);
         filled = MusiclessDsp.OVERLAP;
         submittedFrames += outputFrames;
         int token = generation.get();
@@ -252,7 +253,7 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
     }
 
     private final class OrtWorker extends Worker {
-        MusiclessDsp fullDsp, firstDsp;
+        final java.util.HashMap<Integer, MusiclessDsp> dsps = new java.util.HashMap<>();
         float[] mask;
         @Override float[] infer(float[] block) throws Exception {
             MusiclessModelHolder holder = MusiclessModelHolder.get();
@@ -263,14 +264,7 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
             long start = System.nanoTime();
             long cpuStart = android.os.Debug.threadCpuTimeNanos();
             int frames = block.length / (2 * MusiclessDsp.HOP);
-            MusiclessDsp dsp;
-            if (frames == FIRST_FRAMES) {
-                if (firstDsp == null) firstDsp = new MusiclessDsp(FIRST_FRAMES);
-                dsp = firstDsp;
-            } else {
-                if (fullDsp == null) fullDsp = new MusiclessDsp();
-                dsp = fullDsp;
-            }
+            MusiclessDsp dsp = dsps.computeIfAbsent(frames, MusiclessDsp::new);
             long analyzeStart = System.nanoTime();
             float[][] analysis = dsp.analyze(block);
             long analyzeEnd = System.nanoTime(), vocalsNs, accompanimentNs, maskNs;

@@ -339,8 +339,8 @@ public class MusiclessAudioProcessorTest {
         int heldPosition = input.position();
         assertFalse(sink.handleBuffer(input, startUs, 1));
         assertEquals(heldPosition, input.position());
-        jobs.remove().run();
-        assertTrue(sink.handleBuffer(input, startUs, 1));
+        // Ramp windows are short, so several finished jobs free enough room for the whole input.
+        while (!sink.handleBuffer(input, startUs, 1)) jobs.remove().run();
         assertEquals(startUs, (long) times.get(0));
         sink.playToEndOfStream();
         while (!jobs.isEmpty()) jobs.remove().run();
@@ -350,6 +350,88 @@ public class MusiclessAudioProcessorTest {
         assertTrue(sink.isEnded());
         sink.reset();
         while (!jobs.isEmpty()) jobs.remove().run();
+    }
+
+    @Test public void pendingDataPollWritesFinishedVocalsWithoutNewInput() throws Exception {
+        int[] written = {0};
+        java.util.ArrayDeque<Runnable> jobs = new java.util.ArrayDeque<>();
+        androidx.media3.exoplayer.audio.AudioSink track = (androidx.media3.exoplayer.audio.AudioSink)
+                java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
+                        new Class<?>[] {androidx.media3.exoplayer.audio.AudioSink.class}, (proxy, method, args) -> {
+                            if (method.getName().equals("handleBuffer")) {
+                                ByteBuffer buffer = (ByteBuffer) args[0];
+                                written[0] += buffer.remaining() / 4;
+                                buffer.position(buffer.limit());
+                                return true;
+                            }
+                            if (method.getName().equals("hasPendingData")) return written[0] > 0;
+                            if (method.getReturnType() == boolean.class) return false;
+                            if (method.getReturnType() == int.class) return 0;
+                            if (method.getReturnType() == long.class) return 0L;
+                            return null;
+                        });
+        MusiclessAudioSink sink = new MusiclessAudioSink(track, new MusiclessAudioProcessor(identity(), jobs::add));
+        sink.configure(new androidx.media3.common.Format.Builder().setSampleMimeType("audio/raw")
+                .setPcmEncoding(C.ENCODING_PCM_16BIT).setSampleRate(44100).setChannelCount(2).build(), 0, null);
+        try {
+            sink.handleBuffer(pcm(MusiclessAudioProcessor.FIRST_WINDOW, 0), 0, 1);
+            assertEquals(0, written[0]);
+            // The window finishes after the renderer ran out of decoded input (next network chunk pending).
+            jobs.remove().run();
+            assertTrue(sink.hasPendingData());
+            assertTrue("Finished vocals must reach the track without another handleBuffer", written[0] > 0);
+        } finally {
+            sink.reset();
+            while (!jobs.isEmpty()) jobs.remove().run();
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+        }
+    }
+
+    @Test public void fullTrackReportingNoPendingDataIsNotAHold() throws Exception {
+        boolean[] full = {false};
+        java.util.ArrayDeque<Runnable> jobs = new java.util.ArrayDeque<>();
+        java.util.ArrayList<Boolean> holds = new java.util.ArrayList<>();
+        MusiclessHold.Listener listener = holds::add;
+        MusiclessHold.addListener(listener);
+        // Emulator after an underrun: DefaultAudioSink plays in real time yet reports no pending data for ~10 s.
+        androidx.media3.exoplayer.audio.AudioSink track = (androidx.media3.exoplayer.audio.AudioSink)
+                java.lang.reflect.Proxy.newProxyInstance(getClass().getClassLoader(),
+                        new Class<?>[] {androidx.media3.exoplayer.audio.AudioSink.class}, (proxy, method, args) -> {
+                            if (method.getName().equals("handleBuffer")) {
+                                if (full[0]) return false;
+                                ByteBuffer buffer = (ByteBuffer) args[0];
+                                buffer.position(buffer.limit());
+                                return true;
+                            }
+                            if (method.getName().equals("hasPendingData")) return !full[0];
+                            if (method.getReturnType() == boolean.class) return false;
+                            if (method.getReturnType() == int.class) return 0;
+                            if (method.getReturnType() == long.class) return 0L;
+                            return null;
+                        });
+        MusiclessAudioSink sink = new MusiclessAudioSink(track, new MusiclessAudioProcessor(identity(), jobs::add));
+        sink.configure(new androidx.media3.common.Format.Builder().setSampleMimeType("audio/raw")
+                .setPcmEncoding(C.ENCODING_PCM_16BIT).setSampleRate(44100).setChannelCount(2).build(), 0, null);
+        try {
+            int first = MusiclessAudioProcessor.FIRST_WINDOW;
+            sink.handleBuffer(pcm(first, 0), 0, 1);
+            jobs.remove().run();
+            sink.hasPendingData();
+            full[0] = true;
+            sink.handleBuffer(pcm(2 * first, first), first * 1000000L / 44100, 1);
+            jobs.remove().run();
+            sink.hasPendingData();
+            Thread.sleep(150); // past the hold debounce
+            sink.hasPendingData();
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+            assertEquals("Only the start hold", 1, java.util.Collections.frequency(holds, Boolean.TRUE));
+            assertEquals(Boolean.FALSE, holds.get(holds.size() - 1));
+        } finally {
+            sink.reset();
+            while (!jobs.isEmpty()) jobs.remove().run();
+            MusiclessHold.removeListener(listener);
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle();
+        }
     }
 
     @Test public void blockedTrackStillAcceptsTwoWindowsAhead() throws Exception {
@@ -362,7 +444,9 @@ public class MusiclessAudioProcessorTest {
             track.blocked = true;
             ByteBuffer ahead = pcm(3 * MusiclessDsp.STRIDE, MusiclessAudioProcessor.FIRST_WINDOW);
             assertFalse(sink.handleBuffer(ahead, MusiclessAudioProcessor.FIRST_WINDOW * 1000000L / 44100, 1));
-            assertEquals("Pending output must not gate input look-ahead", 2 * MusiclessDsp.STRIDE * 4, ahead.position());
+            int ramp = (2 * MusiclessAudioProcessor.FIRST_WINDOW - MusiclessDsp.OVERLAP)
+                    + (4 * MusiclessAudioProcessor.FIRST_WINDOW - MusiclessDsp.OVERLAP); // 128 + 256 frames.
+            assertEquals("Pending output must not gate input look-ahead", ramp * 4, ahead.position());
             assertEquals(2, jobs.size());
             int position = ahead.position();
             sink.handleBuffer(ahead, MusiclessAudioProcessor.FIRST_WINDOW * 1000000L / 44100, 1);

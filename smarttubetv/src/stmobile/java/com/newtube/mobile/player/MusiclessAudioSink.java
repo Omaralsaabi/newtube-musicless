@@ -19,6 +19,8 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
     private boolean draining, discontinuity;
     private long inputFrames;
     private ByteBuffer inputBuffer;
+    private InitializationException deferredInit;
+    private WriteException deferredWrite;
     private final HoldDebounce hold = new HoldDebounce();
     private long holdStart;
     private String holdReason = "start";
@@ -41,7 +43,12 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
 
     private void updateHold() {
         long now = System.nanoTime();
-        boolean starved = (output.hasRemaining() || processor.hasPendingData()) && !super.hasPendingData();
+        // After an underrun DefaultAudioSink can report no pending data for ~10 s while it plays normally;
+        // vocals waiting for a full track mean playback is running, so only nothing-to-write is a hold.
+        boolean started = outputFrames > output.remaining() / 4;
+        boolean starved = !super.hasPendingData() && (started
+                ? !output.hasRemaining() && processor.hasPendingData()
+                : output.hasRemaining() || processor.hasPendingData());
         if (starved && hold.since < 0 && !hold.holding) processor.beginHold();
         if (!hold.update(starved, now)) return;
         if (hold.holding) {
@@ -118,6 +125,7 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
 
     @Override public boolean handleBuffer(ByteBuffer buffer, long timeUs, int count)
             throws InitializationException, WriteException {
+        rethrowDeferred();
         if (pendingFormat != null) {
             if (pendingFormat.sampleRate == inputFormat.sampleRate
                     && pendingFormat.channelCount == inputFormat.channelCount
@@ -175,6 +183,7 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
     @Override public void playToEndOfStream() throws WriteException {
         if (!draining) { processor.queueEndOfStream(); draining = true; }
         try {
+            rethrowDeferred();
             if (drain() && processor.isEnded()) super.playToEndOfStream();
         } catch (InitializationException error) {
             WriteException failure = new WriteException(-1, inputFormat, false);
@@ -188,7 +197,21 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
         discontinuity = true;
     }
 
+    private void rethrowDeferred() throws InitializationException, WriteException {
+        InitializationException init = deferredInit; WriteException write = deferredWrite;
+        deferredInit = null; deferredWrite = null;
+        if (init != null) throw init;
+        if (write != null) throw write;
+    }
+
     @Override public boolean hasPendingData() {
+        // Look-ahead consumes all decoded audio, so handleBuffer may not run again until the next network
+        // chunk; this per-tick poll writes finished vocals meanwhile (errors surface on the next handleBuffer).
+        if (startUs != C.TIME_UNSET && deferredInit == null && deferredWrite == null) {
+            try { drain(); }
+            catch (InitializationException error) { deferredInit = error; }
+            catch (WriteException error) { deferredWrite = error; }
+        }
         // Stream-read EOF can precede playToEndOfStream: keep ALL unwritten vocals on the audio clock.
         updateHold();
         return output.hasRemaining() || processor.hasPendingData() || super.hasPendingData();
@@ -205,6 +228,7 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
         output = AudioProcessor.EMPTY_BUFFER;
         startUs = C.TIME_UNSET; outputFrames = inputFrames = 0;
         draining = discontinuity = false; inputBuffer = null;
+        deferredInit = null; deferredWrite = null;
     }
 
     @Override public void reset() {
@@ -214,6 +238,7 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
         output = AudioProcessor.EMPTY_BUFFER;
         startUs = C.TIME_UNSET; outputFrames = inputFrames = 0;
         draining = discontinuity = false; inputBuffer = null;
+        deferredInit = null; deferredWrite = null;
     }
 
     @Override public void release() { reset(); super.release(); }
