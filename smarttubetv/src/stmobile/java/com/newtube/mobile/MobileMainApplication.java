@@ -163,9 +163,26 @@ public class MobileMainApplication extends MainApplication {
         // TV default unchanged.
         PlayerData.setDefaultVideoFormatMax1080(true);
 
+        // Musicless fork, fresh install (no language ever chosen - "Default" saves ""): Arabic UI, set
+        // before any screen reads the locale.
+        com.liskovsoft.sharedutils.prefs.GlobalPreferences global =
+                com.liskovsoft.sharedutils.prefs.GlobalPreferences.instance(this);
+        boolean forkFirstRun = com.liskovsoft.smartyoutubetv2.tv.BuildConfig.MUSICLESS_FORK && global.getPreferredLanguage() == null;
+        if (forkFirstRun) {
+            global.setPreferredLanguage("ar");
+            com.liskovsoft.sharedutils.locale.LocaleUpdater.clearCache();
+        }
+
         // Keep ALL existing TV init: Conscrypt, GlobalPreferences, multidex, the
         // global exception handler and every other View->Activity mapping.
         super.onCreate();
+        if (forkFirstRun) {
+            // YouTube's signed-out Home can't be filtered: the fork starts without it (Settings > Tabs brings it back).
+            com.liskovsoft.smartyoutubetv2.common.app.presenters.service.SidebarService sidebar =
+                    com.liskovsoft.smartyoutubetv2.common.app.presenters.service.SidebarService.instance(this);
+            sidebar.enableSection(com.liskovsoft.mediaserviceinterfaces.data.MediaGroup.TYPE_HOME, false);
+            sidebar.setBootSectionId(com.liskovsoft.mediaserviceinterfaces.data.MediaGroup.TYPE_SUBSCRIPTIONS);
+        }
         // Schedules legacy bundled-model cache cleanup once, even when separation is off.
         com.newtube.mobile.player.MusiclessModels models = com.newtube.mobile.player.MusiclessModels.get(this);
         // On by default in the fork build: fetch the voice models before the first video needs them.

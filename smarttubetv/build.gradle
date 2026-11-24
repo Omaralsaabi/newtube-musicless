@@ -268,6 +268,8 @@ android {
         androidTest.assets.srcDir layout.buildDirectory.dir('generated/sabrComparisonAssets').get().asFile
         // Reuse the generated offline media fixture only in the benchmark APK, never release.
         benchmark.assets.srcDir 'src/debug/assets'
+        // Musicless fork icon (emerald, voice bars): the release build type outranks the stmobile flavor.
+        if (project.hasProperty("forkAppId")) release.res.srcDir 'src/musicless/res'
     }
 
     packagingOptions {
