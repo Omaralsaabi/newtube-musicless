@@ -19,22 +19,38 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
     private boolean draining, discontinuity;
     private long inputFrames;
     private ByteBuffer inputBuffer;
-    private boolean holding;
+    private final HoldDebounce hold = new HoldDebounce();
     private long holdStart;
     private String holdReason = "start";
 
+    /** AudioTrack pending data flickers for a few ms while chunks are written; only sustained starvation is a hold. */
+    static final class HoldDebounce {
+        static final long DELAY_NS = 100_000_000L;
+        long since = -1;
+        boolean holding;
+        /** Returns true when the debounced hold state changed. */
+        boolean update(boolean starved, long nowNs) {
+            if (!starved) since = -1; else if (since < 0) since = nowNs;
+            boolean next = starved && (holding || nowNs - since >= DELAY_NS);
+            if (next == holding) return false;
+            holding = next;
+            return true;
+        }
+        void set(boolean value, long nowNs) { holding = value; since = value ? nowNs : -1; }
+    }
+
     private void updateHold() {
-        boolean next = (output.hasRemaining() || processor.hasPendingData()) && !super.hasPendingData();
-        if (next == holding) return;
-        holding = next;
-        if (next) {
-            holdStart = System.nanoTime();
-            processor.beginHold();
+        long now = System.nanoTime();
+        boolean starved = (output.hasRemaining() || processor.hasPendingData()) && !super.hasPendingData();
+        if (starved && hold.since < 0 && !hold.holding) processor.beginHold();
+        if (!hold.update(starved, now)) return;
+        if (hold.holding) {
+            holdStart = hold.since;
         } else {
             logHold();
             holdReason = "underrun";
         }
-        MusiclessHold.publish(this, next);
+        MusiclessHold.publish(this, hold.holding);
     }
     private void logHold() {
         long end = System.nanoTime();
@@ -45,8 +61,8 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
                 + " totalMs=" + (end - holdStart) / 1000000);
     }
     private void clearHold() {
-        if (holding) logHold();
-        holding = false;
+        if (hold.holding) logHold();
+        hold.set(false, 0);
         MusiclessHold.publish(this, false);
     }
 
@@ -131,8 +147,8 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
         // A full AudioTrack must not prevent bounded decoding/inference ahead of the playhead.
         drain();
         int before = buffer.remaining();
-        if (!holding && inputFrames == 0) {
-            holding = true; holdStart = System.nanoTime(); processor.beginHold();
+        if (!hold.holding && inputFrames == 0) {
+            holdStart = System.nanoTime(); hold.set(true, holdStart); processor.beginHold();
             MusiclessHold.publish(this, true);
         }
         processor.queueInput(buffer);

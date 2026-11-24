@@ -40,4 +40,24 @@ public class MusiclessHoldTest {
         MusiclessHold.removeListener(listener);
         Shadows.shadowOf(Looper.getMainLooper()).idle();
     }
+
+    @Test public void debounceIgnoresShortAudioTrackGaps() {
+        MusiclessAudioSink.HoldDebounce hold = new MusiclessAudioSink.HoldDebounce();
+        long ms = 1000000L, now = 0;
+        // The emulator log showed 10 starvation gaps of 0-18 ms in 200 ms after an underrun.
+        for (int i = 0; i < 10; i++) {
+            assertFalse(hold.update(true, now)); assertFalse(hold.update(true, now + 18 * ms));
+            assertFalse(hold.update(false, now + 20 * ms));
+            now += 20 * ms;
+        }
+        assertFalse(hold.holding);
+        assertFalse(hold.update(true, now));
+        assertTrue(hold.update(true, now + 100 * ms));
+        assertTrue(hold.holding); assertEquals(now, hold.since);
+        assertFalse(hold.update(true, now + 5000 * ms));
+        assertTrue(hold.update(false, now + 5001 * ms));
+        assertFalse(hold.holding);
+        hold.set(true, 7);
+        assertTrue(hold.update(false, 8));
+    }
 }
