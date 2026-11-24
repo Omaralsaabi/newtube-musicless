@@ -26,7 +26,7 @@ name: Build release
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*", "!v*-musicless.*"]   # Musicless tags: musicless-release.yml
   workflow_dispatch:
 
 permissions:
