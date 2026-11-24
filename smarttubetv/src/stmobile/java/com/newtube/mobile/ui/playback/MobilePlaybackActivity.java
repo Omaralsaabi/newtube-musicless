@@ -4056,6 +4056,14 @@ public class MobilePlaybackActivity extends MobileActivity
         // reachable for power users deeper in that sheet.
         addMenuRow(content, sheet, R.drawable.ic_player_quality, R.string.mobile_player_quality,
                 currentQualityLabel(), true, this::showQualitySheet);
+        // Remove music, same switch as Settings: the audio sink is built with the player, so a flip
+        // restarts the engine (createPlayerObjects re-reads it and resets the download gate).
+        boolean musicless = com.newtube.mobile.player.MusiclessPrefs.isOn(this);
+        addMenuRow(content, sheet, R.drawable.ic_player_remove_music, R.string.mobile_settings_remove_music,
+                stateLabel(musicless), false, () -> {
+                    com.newtube.mobile.player.MusiclessPrefs.setOn(this, !musicless);
+                    restartEngine();
+                });
         // Audio track, like YouTube: only on videos that ship more than one language (dubs).
         List<AudioTrackChoices.Choice> audioChoices = audioTrackChoices();
         if (audioChoices.size() > 1) {
