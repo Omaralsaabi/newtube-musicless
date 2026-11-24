@@ -2,7 +2,7 @@
 """Write musicless.json, the in-app update manifest of the Musicless fork build (same format as
 tools/update_manifest.py's newtube.json; the fork's feed is -PforkUpdateUrl, normally
 https://github.com/<repo>/releases/latest/download/musicless.json).
-Usage: tools/musicless_manifest.py --repo yshalsager/newtube --tag v1.17.1-musicless.1 \\
+Usage: tools/musicless_manifest.py --repo yshalsager/newtube-musicless --tag v1.17.1-musicless.1 \\
            --code 1170101 --dist dist --out dist/musicless.json --note "Removes music" ...
 """
 import argparse

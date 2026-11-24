@@ -37,7 +37,7 @@ jobs:
       # SHA-256 of the certificate every NewTube Musicless release is signed with.
       EXPECTED_CERT: 1490631944f31de3697ef4df013971d729adfa3c888c4a5360d57e4c5b29f741
       APP_ID: io.github.yshalsager.newtube.musicless
-      MODELS_URL: https://github.com/yshalsager/newtube/releases/download/musicless-models-v1
+      MODELS_URL: https://github.com/yshalsager/newtube-musicless/releases/download/musicless-models-v1
       NDK_VERSION: 21.0.6113669   # smarttubetv/build.gradle ndkVersion (strips the .so files)
     steps:
       - name: Check out
