@@ -117,6 +117,25 @@ import Testing
         await rig.player.close()
     }
 
+    @Test func aQualitySwitchCatchesTheNewFileUpWithoutStoppingTheVoices() async throws {
+        let rig = try PlayerRig(video: true)
+        await rig.player.start(at: 0)
+        try await rig.eventually { await rig.player.snapshot().status == .playing }
+        try await Task.sleep(for: .milliseconds(1_200))
+        // The "other quality" is the same 144p file at another URL (a new answer's link for it).
+        let pictures = try TwoSegmentFile(itag: 160)
+        let stub = MediaStub()
+        stub.serve { request in .partial(pictures.body, request) }
+        let fetcher = MediaFetcher(file: pictures.mediaFile, session: stub.session, hosts: MediaHostBook(), network: FakeNetwork())
+        try await rig.player.switchVideo(to: pictures.source, fetcher: fetcher)
+        try await rig.eventually { rig.videoLines.contains { $0.hasPrefix("video first-frame reason=quality") } }
+        let line = try #require(rig.videoLines.first { $0.hasPrefix("video first-frame reason=quality") })
+        #expect((Self.field("hidden", in: line).flatMap(Int.init) ?? 0) > 20, "catches up from the keyframe (\(line))")
+        #expect(stub.requests.count >= 1, "the new file is read")
+        #expect(await rig.player.snapshot().status == .playing, "the voices never stopped")
+        await rig.player.close()
+    }
+
     // MARK: Helpers
 
     static func field(_ name: String, in line: String) -> String? {

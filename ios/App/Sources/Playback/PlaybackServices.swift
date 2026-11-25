@@ -96,6 +96,8 @@ struct ResolvedMedia: Sendable {
     var video: FMP4Source?
     /// `1080p60 avc1.640028`, for the screen and the log.
     var videoLabel: String?
+    /// Every H.264 quality the answer offers (the quality picker), best first; `video` is one of them.
+    var videoOptions: [VideoOption]
     /// The best Opus file (WebM), the sync check's reference: Opus states its encoder delay.
     var opus: MediaFile?
     /// The smallest VP9 file (WebM): the sync check's cross-check of the video timeline.
@@ -103,6 +105,36 @@ struct ResolvedMedia: Sendable {
     /// Seconds the AAC runs late without declaring it (`YouTubeAudio.delay`), for the engine.
     var audioDelay: Double
     var playerMs: Int
+}
+
+/// One H.264 quality of a video, for the quality picker.
+struct VideoOption: Identifiable, Hashable, Sendable {
+    var id: Int { itag }
+    var itag: Int
+    /// `1080p60`, `720p`, …
+    var label: String
+    var source: FMP4Source
+
+    static func == (lhs: VideoOption, rhs: VideoOption) -> Bool { lhs.itag == rhs.itag }
+    func hash(into hasher: inout Hasher) { hasher.combine(itag) }
+
+    /// The avc1 files the engine can play (≤ 1080p, ≤ 60 fps, with ranges), best first, one per label
+    /// (the higher bitrate wins), the same rules as `FormatSelector`.
+    static func options(_ formats: [PlayerAnswer.Format], source: (PlayerAnswer.Format) -> FMP4Source?) -> [VideoOption] {
+        let playable = formats.filter {
+            $0.container == "video/mp4" && $0.codecs.hasPrefix("avc1") && ($0.shortSide ?? .max) <= FormatSelector.maxAVCShortSide
+                && ($0.fps ?? 30) <= 60
+        }
+        .sorted { ($0.shortSide ?? 0, $0.fps ?? 0, $0.bitrate ?? 0) > ($1.shortSide ?? 0, $1.fps ?? 0, $1.bitrate ?? 0) }
+        var seen = Set<String>()
+        return playable.compactMap { format in
+            let fps = format.fps ?? 30
+            let label = "\(format.shortSide ?? 0)p" + (fps > 30 ? "\(fps)" : "")
+            guard !seen.contains(label), let file = source(format) else { return nil }
+            seen.insert(label)
+            return VideoOption(itag: format.itag, label: label, source: file)
+        }
+    }
 }
 
 /// YouTube's AAC-LC at 44.1 kHz runs 38.9 ms later than its Opus for the same audio, which no edit
@@ -143,12 +175,14 @@ enum VideoResolver {
             throw ResolveError(description: "no AAC file with ranges in the answer")
         }
         var video: FMP4Source?, label: String?
+        var options: [VideoOption] = []
         if withVideo {
             guard let videoFormat = selection.video, let picture = source(videoFormat) else {
                 throw ResolveError(description: "no H.264 file with ranges in the answer")
             }
             video = picture
             label = "\(videoFormat.shortSide ?? 0)p\(videoFormat.fps ?? 30) \(videoFormat.codecs)"
+            options = VideoOption.options(answer.adaptiveFormats, source: source)
         }
         let opus = answer.adaptiveFormats
             .filter { $0.container == "audio/webm" && $0.codecs == "opus" && $0.url != nil && $0.contentLength != nil }
@@ -163,7 +197,8 @@ enum VideoResolver {
                 MediaFile(itag: format.itag, lastModified: format.lastModified, contentLength: format.contentLength!, url: $0)
             } }
         return ResolvedMedia(videoID: videoID, title: answer.details?.title ?? videoID, author: answer.details?.author ?? "",
-                             audio: audio, audioMime: audioFormat.mimeType, video: video, videoLabel: label, opus: opus, vp9: vp9,
+                             audio: audio, audioMime: audioFormat.mimeType, video: video, videoLabel: label,
+                             videoOptions: options, opus: opus, vp9: vp9,
                              audioDelay: YouTubeAudio.delay(codecs: audioFormat.codecs, sampleRate: audioFormat.audioSampleRate),
                              playerMs: Int((ContinuousClock.now - start) / .milliseconds(1)))
     }

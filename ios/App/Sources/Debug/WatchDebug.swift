@@ -5,12 +5,14 @@ import MusiclessCore
 import Observation
 import SwiftUI
 import UIKit
+import YouTubeEngine
 
-/// The debug watch screen: a YouTube video with only the voices, the picture on the same clock
-/// (US-012, US-013). US-014 turns it into the proof-of-concept watch screen (link parsing, seek bar,
-/// quality picker).
+/// The debug watch screen (US-014, the proof-of-concept milestone; US-012 and US-013 grew it): paste
+/// a link and watch it without music. Play/pause, a seek bar, a quality picker, the Remove-music
+/// switch (a flush, the engine is kept), "Preparing voices…" while holding, and the voice models'
+/// progress while playback waits for them. The watch page proper is US-020.
 @MainActor @Observable
-final class VoicesCheck {
+final class WatchDebug {
     struct Preset: Identifiable, Hashable {
         let id: String
         let title: String
@@ -32,6 +34,8 @@ final class VoicesCheck {
     private(set) var resolving = false
     /// The picture of the current video; a new layer per video.
     private(set) var layer: AVSampleBufferDisplayLayer?
+    private(set) var qualities: [VideoOption] = []
+    private(set) var quality: VideoOption?
     var removeMusic = true
     /// Plays the voices without the picture (US-012's mode).
     var audioOnly = false
@@ -64,14 +68,16 @@ final class VoicesCheck {
         }
     }
 
+    var isActive: Bool { engine != nil }
+
     var statusText: String {
         if let error { return "Failed: \(error)" }
         if resolving { return "Resolving…" }
-        guard let snapshot else { return "Pick a video" }
+        guard let snapshot else { return "Paste a link or pick a video" }
         switch snapshot.status {
         case .idle: return "Stopped"
         case .loading: return "Opening…"
-        case .holding: return "Preparing voices…"
+        case .holding: return waitingText
         case .playing: return snapshot.removeMusic ? "Playing voices only" : "Playing the original audio"
         case .paused: return "Paused"
         case .ended: return "Ended"
@@ -79,7 +85,24 @@ final class VoicesCheck {
         }
     }
 
-    var isActive: Bool { engine != nil }
+    /// While holding: the models' download (playback waits for it) or the separation itself.
+    var waitingText: String {
+        guard snapshot?.removeMusic != false else { return "Loading…" }
+        switch models.status {
+        case .downloading(let percent): return "Downloading voice models… \(percent)%"
+        case .notDownloaded: return "Downloading voice models…"
+        case .failed(let message): return "Voice models failed: \(message)"
+        case .ready: return "Preparing voices…"
+        }
+    }
+
+    var isHolding: Bool {
+        if case .holding = snapshot?.status { true } else { false }
+    }
+
+    func play(_ link: VideoLink) async {
+        await play(link.videoID, at: link.startSeconds ?? 0)
+    }
 
     func play(_ videoID: String, at seconds: Double = 0) async {
         await stop(reason: "new video")
@@ -94,27 +117,27 @@ final class VoicesCheck {
             let media = try await VideoResolver.media(for: videoID, withVideo: !audioOnly)
             guard token == generation else { return }
             title = media.title
-            detail = [media.author, media.videoLabel, "itag \(media.audio.file.itag)"].compactMap { $0 }.joined(separator: " · ")
+            qualities = media.videoOptions
+            quality = media.videoOptions.first { $0.source.file.itag == media.video?.file.itag }
+            detail = [media.author, "itag \(media.audio.file.itag)"].joined(separator: " · ")
             playerMs = media.playerMs
             try PlaybackAudioSession.shared.activate()
             let runtime = PlaybackServices.shared.runtime(models: models)
             let separator = Separator(backend: runtime, log: { line in
                 AppLog.musicless.info(line.hasPrefix("Window pipeline") ? line + " appState=\(AppActivity.logValue)" : line)
             })
-            let netLog: @Sendable (String) -> Void = { AppLog.netPath.info($0) }
             var video: VideoInput?
             if let picture = media.video {
                 let layer = AVSampleBufferDisplayLayer()
                 layer.videoGravity = .resizeAspect
                 layer.backgroundColor = UIColor.black.cgColor
                 self.layer = layer
-                video = VideoInput(source: picture, fetcher: MediaFetcher(file: picture.file, log: netLog),
-                                   renderer: layer.sampleBufferRenderer)
+                video = VideoInput(source: picture, fetcher: Self.fetcher(picture), renderer: layer.sampleBufferRenderer)
             }
             var configuration = PlayerEngine.Configuration()
             configuration.audioDelay = media.audioDelay
             let engine = PlayerEngine(
-                audio: media.audio, fetcher: MediaFetcher(file: media.audio.file, log: netLog),
+                audio: media.audio, fetcher: Self.fetcher(media.audio),
                 stage: SeparatorStage(separator: separator), video: video, configuration: configuration,
                 log: { AppLog.player.info($0 + " appState=\(AppActivity.logValue)") },
                 holdLog: { AppLog.musicless.info($0) },
@@ -122,7 +145,7 @@ final class VoicesCheck {
             self.engine = engine
             resolving = false
             AppLog.player.info("voices resolved video=\(videoID) title=\"\(media.title)\" video=\"\(media.videoLabel ?? "none")\" "
-                               + "playerMs=\(media.playerMs)")
+                               + "qualities=\(media.videoOptions.map(\.label).joined(separator: ",")) playerMs=\(media.playerMs)")
             startPolling()
             await engine.start(at: seconds, removeMusic: removeMusic)
         } catch {
@@ -133,20 +156,39 @@ final class VoicesCheck {
         }
     }
 
+    private static func fetcher(_ source: FMP4Source) -> MediaFetcher {
+        MediaFetcher(file: source.file, log: { AppLog.netPath.info($0) })
+    }
+
     func togglePlay() async {
         guard let engine, let snapshot else { return }
         snapshot.wantsToPlay ? await engine.pause() : await engine.play()
         self.snapshot = await engine.snapshot()
     }
 
+    func seek(to seconds: Double) async {
+        await engine?.seek(to: seconds)
+    }
+
     func skip(_ seconds: Double) async {
-        guard let engine, let snapshot else { return }
-        await engine.seek(to: snapshot.position + seconds)
+        guard let snapshot else { return }
+        await seek(to: snapshot.position + seconds)
     }
 
     func setRemoveMusic(_ on: Bool) async {
         removeMusic = on
         await engine?.setRemoveMusic(on)
+    }
+
+    func setQuality(_ option: VideoOption) async {
+        guard let engine, option != quality else { return }
+        quality = option
+        AppLog.player.info("voices quality=\(option.label) itag=\(option.itag)")
+        do {
+            try await engine.switchVideo(to: option.source, fetcher: Self.fetcher(option.source))
+        } catch {
+            AppLog.player.info("voices quality failed error=\(error)")
+        }
     }
 
     /// Ends playback; `reason` goes to the log (`voices stop reason=…`).
@@ -161,6 +203,8 @@ final class VoicesCheck {
         }
         layer = nil
         snapshot = nil
+        qualities = []
+        quality = nil
     }
 
     /// US-013's seek measurement (`--seek-check`): 10 seeks spread over the video, each timed from the
@@ -178,7 +222,10 @@ final class VoicesCheck {
             await engine.seek(to: target)
             var ready = false
             while ContinuousClock.now - start < .seconds(10) {
-                if await engine.snapshot().status == .playing { ready = true; break }
+                if await engine.snapshot().status == .playing {
+                    ready = true
+                    break
+                }
                 try? await Task.sleep(for: .milliseconds(10))
             }
             let ms = Int((ContinuousClock.now - start) / .milliseconds(1))
@@ -211,6 +258,17 @@ final class VoicesCheck {
         AppLog.player.info("background-test done")
     }
 
+    /// `--quality-check`: after 8 s of playback, step through every quality, 8 s each.
+    func runQualityCheck() async {
+        while snapshot?.status != .playing { try? await Task.sleep(for: .milliseconds(200)) }
+        for option in qualities.reversed() + qualities.prefix(1) {
+            try? await Task.sleep(for: .seconds(8))
+            await setQuality(option)
+        }
+        try? await Task.sleep(for: .seconds(8))
+        AppLog.player.info("quality-check done")
+    }
+
     private func changed(_ snapshot: PlayerEngine.Snapshot) {
         self.snapshot = snapshot
         if snapshot.status == .playing, let tapAt {
@@ -232,128 +290,189 @@ final class VoicesCheck {
     }
 }
 
-/// The player lives in `check`, which RootView owns and stops when this screen's route is popped,
+/// The player lives in `watch`, which RootView owns and stops when this screen's route is popped,
 /// not on `onDisappear`, so nothing the system does to the view (a lock, a sheet) can stop it.
-struct VoicesCheckView: View {
-    let check: VoicesCheck
+struct WatchDebugView: View {
+    let watch: WatchDebug
     var autoPlay: (id: String, at: Double)?
     var seekCheck = false
     var backgroundTest = false
-    @State private var custom = ""
+    var qualityCheck = false
+    @State private var link = ""
+    /// The seek bar's value while it is being dragged; nil otherwise.
+    @State private var scrub: Double?
 
     var body: some View {
         List {
-            if let layer = check.layer {
-                Section {
+            Section {
+                if let layer = watch.layer {
                     VideoLayerView(layer: layer)
                         .aspectRatio(16 / 9, contentMode: .fit)
-                        .overlay {
-                            if case .holding = check.snapshot?.status {
-                                ProgressView("Preparing voices…")
-                                    .padding(10)
-                                    .background(.black.opacity(0.6), in: .rect(cornerRadius: 8))
-                            }
-                        }
+                        .overlay { overlay }
+                        .listRowInsets(EdgeInsets())
+                } else if watch.isActive {
+                    Color.black.aspectRatio(16 / 9, contentMode: .fit)
+                        .overlay { overlay }
                         .listRowInsets(EdgeInsets())
                 }
+                linkRow
             }
-            if check.isActive || check.error != nil || check.resolving {
-                Section("Now playing") {
+            if watch.isActive || watch.error != nil || watch.resolving {
+                Section {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(check.title).font(.headline)
-                        if !check.detail.isEmpty {
-                            Text(check.detail).font(.footnote).foregroundStyle(.secondary)
+                        Text(watch.title).font(.headline)
+                        if !watch.detail.isEmpty {
+                            Text(watch.detail).font(.footnote).foregroundStyle(.secondary)
                         }
-                        Text(check.statusText).font(.callout)
-                        if let snapshot = check.snapshot {
-                            Text(Self.timeLine(snapshot))
-                                .font(.footnote.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                        }
+                        Text(watch.statusText).font(.callout)
                     }
                     .textSelection(.enabled)
-                    HStack(spacing: 24) {
-                        Button { Task { await check.skip(-10) } } label: { Image(systemName: "gobackward.10") }
-                        Button { Task { await check.togglePlay() } } label: {
-                            Image(systemName: check.snapshot?.wantsToPlay == false ? "play.fill" : "pause.fill")
+                    if let snapshot = watch.snapshot { seekBar(snapshot) }
+                    controls
+                    Toggle("Remove music", isOn: Binding(get: { watch.removeMusic },
+                                                         set: { on in Task { await watch.setRemoveMusic(on) } }))
+                    if !watch.qualities.isEmpty {
+                        Picker("Quality", selection: Binding(get: { watch.quality ?? watch.qualities[0] },
+                                                             set: { option in Task { await watch.setQuality(option) } })) {
+                            ForEach(watch.qualities) { option in Text(option.label).tag(option) }
                         }
-                        Button { Task { await check.skip(30) } } label: { Image(systemName: "goforward.30") }
-                        Spacer()
-                        Button("Stop", role: .destructive) { Task { await check.stop(reason: "stop button") } }
                     }
-                    .buttonStyle(.borderless)
-                    .font(.title3)
-                    Toggle("Remove music", isOn: Binding(get: { check.removeMusic },
-                                                         set: { on in Task { await check.setRemoveMusic(on) } }))
                 }
             }
             Section {
-                ModelStatusRow()
-                Toggle("Audio only", isOn: Binding(get: { check.audioOnly }, set: { check.audioOnly = $0 }))
-            }
-            Section {
-                ForEach(VoicesCheck.presets) { preset in
+                ForEach(WatchDebug.presets) { preset in
                     Button {
-                        Task { await check.play(preset.id) }
+                        Task { await watch.play(preset.id) }
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(preset.title)
-                            Text(preset.expect)
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
+                            Text(preset.expect).font(.footnote).foregroundStyle(.secondary)
                         }
                     }
-                }
-                HStack {
-                    TextField("Video id or link", text: $custom)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    Button("Play") {
-                        if let id = Self.videoID(in: custom) { Task { await check.play(id) } }
-                    }
-                    .disabled(Self.videoID(in: custom) == nil)
                 }
             } header: {
                 Text("Videos")
             } footer: {
-                Text("Plays the video with the music removed. Switch Remove music off to hear the "
-                     + "original. Lock the screen: the voices should keep playing.")
+                Text("Plays the video with the music removed. Switch Remove music off to hear the original. "
+                     + "Lock the screen: the voices keep playing.")
+            }
+            Section("Debug") {
+                ModelStatusRow()
+                Toggle("Audio only", isOn: Binding(get: { watch.audioOnly }, set: { watch.audioOnly = $0 }))
             }
         }
         .navigationTitle("Watch (debug)")
         .navigationBarTitleDisplayMode(.inline)
         .task {
             guard let autoPlay else { return }
-            await check.play(autoPlay.id, at: autoPlay.at)
+            await watch.play(autoPlay.id, at: autoPlay.at)
             if seekCheck {
-                while check.snapshot?.status != .playing { try? await Task.sleep(for: .milliseconds(100)) }
+                while watch.snapshot?.status != .playing { try? await Task.sleep(for: .milliseconds(100)) }
                 try? await Task.sleep(for: .seconds(3))
-                await check.runSeekCheck()
+                await watch.runSeekCheck()
             }
-            if backgroundTest { await check.runBackgroundTest() }
+            if backgroundTest { await watch.runBackgroundTest() }
+            if qualityCheck { await watch.runQualityCheck() }
         }
     }
 
-    static func timeLine(_ snapshot: PlayerEngine.Snapshot) -> String {
-        var line = "\(clock(snapshot.position)) / \(clock(snapshot.duration ?? 0)) · "
-            + "voices \(String(format: "%.1f", max(0, snapshot.aheadSeconds))) s"
+    @ViewBuilder private var overlay: some View {
+        if watch.isHolding {
+            VStack(spacing: 8) {
+                ProgressView()
+                Text(watch.waitingText).font(.callout)
+            }
+            .padding(12)
+            .background(.black.opacity(0.65), in: .rect(cornerRadius: 10))
+            .foregroundStyle(.white)
+        }
+    }
+
+    private var linkRow: some View {
+        HStack {
+            TextField("YouTube link or video id", text: $link)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .keyboardType(.URL)
+                .submitLabel(.go)
+                .onSubmit(open)
+            // PasteButton reads the clipboard without the paste prompt.
+            PasteButton(payloadType: String.self) { strings in
+                guard let text = strings.first else { return }
+                Task { @MainActor in
+                    link = text
+                    open()
+                }
+            }
+            .labelStyle(.iconOnly)
+            .buttonBorderShape(.capsule)
+            Button("Play", action: open)
+                .disabled(VideoLink.parse(link) == nil)
+        }
+    }
+
+    private func open() {
+        guard let parsed = VideoLink.parse(link) else { return }
+        Task { await watch.play(parsed) }
+    }
+
+    private func seekBar(_ snapshot: PlayerEngine.Snapshot) -> some View {
+        let duration = max(snapshot.duration ?? 0, 1)
+        return VStack(spacing: 2) {
+            Slider(value: Binding(get: { scrub ?? min(snapshot.position, duration) }, set: { scrub = $0 }),
+                   in: 0...duration) { editing in
+                if !editing, let target = scrub {
+                    Task {
+                        await watch.seek(to: target)
+                        scrub = nil
+                    }
+                }
+            }
+            HStack {
+                Text(Self.clock(scrub ?? snapshot.position))
+                Spacer()
+                Text(Self.buffers(snapshot)).foregroundStyle(.tertiary)
+                Spacer()
+                Text(Self.clock(snapshot.duration ?? 0))
+            }
+            .font(.caption.monospacedDigit())
+            .foregroundStyle(.secondary)
+        }
+        // Timelines and playback controls show the tape's direction, so they aren't mirrored in
+        // right-to-left languages (Apple HIG, "Right to left").
+        .environment(\.layoutDirection, .leftToRight)
+    }
+
+    private var controls: some View {
+        HStack(spacing: 28) {
+            Button { Task { await watch.skip(-10) } } label: { Image(systemName: "gobackward.10") }
+                .accessibilityLabel("Back 10 seconds")
+            Button { Task { await watch.togglePlay() } } label: {
+                Image(systemName: watch.snapshot?.wantsToPlay == false ? "play.fill" : "pause.fill")
+            }
+            .accessibilityLabel(watch.snapshot?.wantsToPlay == false ? "Play" : "Pause")
+            Button { Task { await watch.skip(10) } } label: { Image(systemName: "goforward.10") }
+                .accessibilityLabel("Forward 10 seconds")
+            Spacer()
+            Button("Stop", role: .destructive) { Task { await watch.stop(reason: "stop button") } }
+        }
+        .buttonStyle(.borderless)
+        .font(.title3)
+        .environment(\.layoutDirection, .leftToRight)
+    }
+
+    static func buffers(_ snapshot: PlayerEngine.Snapshot) -> String {
+        var line = "voices \(String(format: "%.1f", max(0, snapshot.aheadSeconds))) s"
         if let video = snapshot.videoAheadSeconds {
             line += snapshot.videoActive ? " · picture \(String(format: "%.1f", max(0, video))) s" : " · picture off"
         }
         return line
     }
 
-    /// A bare 11-character id, or one inside a watch, youtu.be, shorts or embed link (US-014 parses
-    /// links properly).
-    static func videoID(in text: String) -> String? {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.wholeMatch(of: /[A-Za-z0-9_-]{11}/) != nil { return trimmed }
-        return trimmed.firstMatch(of: /(?:v=|youtu\.be\/|shorts\/|embed\/)([A-Za-z0-9_-]{11})/).map { String($0.1) }
-    }
-
     static func clock(_ seconds: Double) -> String {
         let total = Int(max(0, seconds))
-        return String(format: "%d:%02d", total / 60, total % 60)
+        return total >= 3_600 ? String(format: "%d:%02d:%02d", total / 3_600, total / 60 % 60, total % 60)
+            : String(format: "%d:%02d", total / 60, total % 60)
     }
 }
 

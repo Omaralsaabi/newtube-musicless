@@ -7,8 +7,8 @@ import YouTubeEngine
 struct RootView: View {
     @Environment(ModelStore.self) private var models
     @State private var path: [Route] = []
-    /// The Voices-only screen's player; it outlives the view and stops when the route is popped.
-    @State private var voices: VoicesCheck?
+    /// The watch screen's player; it outlives the view and stops when the route is popped.
+    @State private var watch: WatchDebug?
 
     enum Route: Hashable {
         case probe
@@ -56,16 +56,18 @@ struct RootView: View {
                 case .benchmark(let autoStart):
                     BenchmarkView(benchmark: SeparationBenchmark(models: models), autoStart: autoStart)
                 case .voices(let id, let at):
-                    if let voices {
-                        VoicesCheckView(check: voices, autoPlay: id.map { ($0, at) },
-                                        seekCheck: ProcessInfo.processInfo.arguments.contains("--seek-check"),
-                                        backgroundTest: ProcessInfo.processInfo.arguments.contains("--background-test"))
+                    if let watch {
+                        let arguments = ProcessInfo.processInfo.arguments
+                        WatchDebugView(watch: watch, autoPlay: id.map { ($0, at) },
+                                       seekCheck: arguments.contains("--seek-check"),
+                                       backgroundTest: arguments.contains("--background-test"),
+                                       qualityCheck: arguments.contains("--quality-check"))
                     }
                 }
             }
         }
         .onAppear {
-            if voices == nil { voices = VoicesCheck(models: models) }
+            if watch == nil { watch = WatchDebug(models: models) }
             AppLog.probe.info("launch version=\(BuildInfo.version) build=\(BuildInfo.build) commit=\(BuildInfo.commit)")
             // `--run-probe` opens the probe at launch, so it can be captured without touching the phone:
             // xcrun devicectl device process launch --device "$DEVICE_ID" --console <bundle id> --run-probe
@@ -95,13 +97,13 @@ struct RootView: View {
                 let ids = arguments[(index + 1)...].prefix { !$0.hasPrefix("--") }
                 let seconds = arguments.firstIndex(of: "--sync-seconds")
                     .flatMap { arguments.indices.contains($0 + 1) ? Double(arguments[$0 + 1]) : nil } ?? 30
-                Task { await SyncCheck.runDelay(videoIDs: ids.isEmpty ? VoicesCheck.presets.map(\.id) + SyncCheck.candidates : Array(ids),
+                Task { await SyncCheck.runDelay(videoIDs: ids.isEmpty ? WatchDebug.presets.map(\.id) + SyncCheck.candidates : Array(ids),
                                                 seconds: seconds) }
             }
             // `--voices [<id>] [--voices-at <seconds>]` plays a video's voices at launch (US-012).
             if path.isEmpty, let index = arguments.firstIndex(of: "--voices") {
                 let next = arguments.indices.contains(index + 1) ? arguments[index + 1] : ""
-                let id = next.hasPrefix("--") || next.isEmpty ? VoicesCheck.presets[0].id : next
+                let id = next.hasPrefix("--") || next.isEmpty ? WatchDebug.presets[0].id : next
                 let at = arguments.firstIndex(of: "--voices-at").flatMap { arguments.indices.contains($0 + 1) ? Double(arguments[$0 + 1]) : nil }
                 path = [.voices(id: id, at: at ?? 0)]
             }
@@ -112,7 +114,7 @@ struct RootView: View {
         }
         .onChange(of: path) { _, path in
             let showsVoices = path.contains { if case .voices = $0 { true } else { false } }
-            if !showsVoices, let voices, voices.isActive { Task { await voices.stop(reason: "left the screen") } }
+            if !showsVoices, let watch, watch.isActive { Task { await watch.stop(reason: "left the screen") } }
         }
         .onChange(of: models.status) { _, status in
             AppLog.musicless.info("Model status \(status.logValue)")

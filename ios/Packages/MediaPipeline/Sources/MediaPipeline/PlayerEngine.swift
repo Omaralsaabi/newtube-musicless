@@ -113,7 +113,7 @@ public actor PlayerEngine {
     private let audio: FMP4Source
     private let fetcher: MediaFetcher
     private let stage: VoiceStage
-    private let video: VideoInput?
+    private var video: VideoInput?
     private let configuration: Configuration
     private let log: @Sendable (String) -> Void
     private let holdLog: @Sendable (String) -> Void
@@ -121,7 +121,7 @@ public actor PlayerEngine {
     private let renderer = AVSampleBufferAudioRenderer()
     private let synchronizer = AVSampleBufferRenderSynchronizer()
     private let audioCache: SegmentCache
-    private let videoCache: SegmentCache
+    private var videoCache: SegmentCache
 
     private var header: FMP4Header?
     private var track: FMP4Track?
@@ -287,6 +287,27 @@ public actor PlayerEngine {
         guard header != nil, !closed else { return }
         log("voices removeMusic=\(on) at=\(Self.format(synchronizer.currentTime().seconds))")
         await restart(at: synchronizer.currentTime().seconds, reason: .seek, passThrough: !on, video: false)
+    }
+
+    /// The quality picker: another H.264 file of the same video on the same renderer. The new file's
+    /// header is read first; then the picture restarts at the playhead and catches up as after the
+    /// background (the old picture stays on screen meanwhile, a flush keeps it), while the voices play on.
+    public func switchVideo(to source: FMP4Source, fetcher: MediaFetcher) async throws {
+        guard video != nil, videoHeader != nil, !closed else { return }
+        let header = try await FMP4Reader.open(fetcher, initRange: source.initRange, indexRange: source.indexRange)
+        guard let track = header.track(.video) else { throw AACDecoderError("no video track") }
+        let format = try track.formatDescription()
+        guard var input = video, !closed else { return }
+        input.source = source
+        input.fetcher = fetcher
+        video = input
+        videoHeader = header
+        videoTrack = track
+        videoFormat = format
+        videoCache = SegmentCache(capacity: configuration.videoCacheBytes)
+        log("video switch itag=\(source.file.itag) size=\(track.width)x\(track.height) at=\(Self.format(synchronizer.currentTime().seconds))")
+        restartVideo(at: synchronizer.currentTime().seconds, reason: "quality", catchUp: true)
+        publish()
     }
 
     /// Background without PiP: false stops feeding the picture; true catches it up to the playhead.

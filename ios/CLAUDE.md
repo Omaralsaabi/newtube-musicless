@@ -83,7 +83,8 @@ xcrun devicectl device process launch --device "$DEVICE_ID" --terminate-existing
   scrubbed, to Documents/answers; copy them off with `devicectl device copy from`),
   `--voices [<id>] [--voices-at <s>]` (US-012/013: the "Watch (debug)" screen plays a video, picture
   and voices; default Big Buck Bunny. Its `voices chunk` lines compare input and voices dB over the
-  same span), with `--seek-check` (10 timed seeks) or `--background-test` (3 unattended trips to the
+  same span), with `--seek-check` (10 timed seeks), `--quality-check` (every quality, 8 s each) or
+  `--background-test` (3 unattended trips to the
   Files app; bring the app back with `devicectl device process launch` *without*
   `--terminate-existing`), `--sync-check [<id>]` (beeps vs marker frames, AAC vs Opus) and
   `--delay-check [<id> …]` (AAC vs Opus delay by cross-correlation).

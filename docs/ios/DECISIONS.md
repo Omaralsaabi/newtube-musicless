@@ -603,6 +603,41 @@ Personal Team test (Q8, D15) moves with them: there is still no paid-only capabi
   - Launch flags: `--seek-check`, `--background-test`, `--sync-check [<id>] [--sync-seconds <s>]
     [--sync-frames]` and `--delay-check [<id> …]`.
 
+### D45. The debug watch screen — US-014 (ends PR B's code)
+
+- **Links:** `VideoLink` (YouTubeEngine) ports SmartTube's `IntentExtractor`:
+  - the id comes from `v`, else the first of `video_ids`, else a `vnd.youtube://` host, else the last
+    path segment, and is accepted at 11 characters;
+  - `t=` gives the start (`90`, `1m30s`, `1h2m3s`).
+  - iOS also takes bare ids and links without a scheme, and checks the id alphabet; Android checks
+    only the length.
+  - Covered: watch, `m.`, `music.`, youtu.be, shorts, embed (and nocookie), live, `watch_videos`.
+  - Refused: channel links, handles and searches.
+- **Screen** ("Watch (debug)", `WatchDebug`):
+  - a link field with a `PasteButton`, which reads the clipboard without the paste prompt;
+  - play/pause and ±10 s;
+  - a seek bar that seeks on release;
+  - the H.264 quality picker (`VideoOption`: every avc1 ≤ 1080p and ≤ 60 fps, one per label, best
+    first);
+  - the Remove-music switch: an audio flush, the engine is kept;
+  - the overlay while holding: "Preparing voices…", or "Downloading voice models… N%" while
+    playback waits for the models.
+- **Quality switch** (`PlayerEngine.switchVideo`): reads the new file's header, then restarts the
+  picture at the playhead and catches up as after the background. The old picture stays up meanwhile
+  (a flush keeps it), and the voices play on.
+- **Right to left:** with forced RTL, the screen mirrors, but the seek bar and the playback buttons
+  stay left to right: timelines show the tape's direction (Apple HIG, "Right to left"). Debug strings
+  stay English. The real Arabic check needs US-025's localisation: iOS lays out an app without an
+  Arabic localisation left to right, even with Arabic as the language.
+- **Measured:**
+  - Simulator: a fresh install played with no models. The overlay showed the download (0 → 100 % in
+    ~3 s on the Mac's network); the start hold lasted 4.1 s, of which `waitModelMs` 2,962.
+  - iPhone, `--quality-check`, Sintel from 1:40: 6 switches (128p → 818p). The picture caught up in
+    102–648 ms after each, with no hold and no gap in the voices.
+- **Not done here:** the PR's demo recording from the iPhone (needs the developer). The simulator's
+  `simctl io recordVideo` fails without a Simulator window (SimRenderServer error 2). Screenshots
+  are in the gitignored `ios/build/demo/`.
+
 ## Settled `[verify]` items
 
 | PRD item | Result | Evidence |
