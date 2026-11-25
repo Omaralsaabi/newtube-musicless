@@ -60,8 +60,10 @@ public class MusiclessAudioProcessorTest {
 
     @Test public void acquisitionFailureStaysSilentAndReadyRetryRearmsSeparation() throws Exception {
         Context context = RuntimeEnvironment.getApplication();
-        MusiclessModels models = MusiclessModels.get(context);
-        MusiclessModels.Status previous = models.status;
+        MusiclessModels previous = MusiclessModels.get(context);
+        // No download URL: a retry fails at once instead of fetching the real models (debug builds have a URL).
+        MusiclessModels models = MusiclessModels.instance = new MusiclessModels(
+                new java.io.File(context.getCacheDir(), "musicless-test"), "", MusiclessModels.NAMES, MusiclessModels.HASHES);
         MusiclessAudioProcessor processor = new MusiclessAudioProcessor(context);
         try {
             models.status = MusiclessModels.Status.FAILED;
@@ -81,7 +83,7 @@ public class MusiclessAudioProcessorTest {
                     processor.getOutput().hasRemaining());
         } finally {
             processor.reset();
-            models.status = previous;
+            MusiclessModels.instance = previous;
         }
     }
 

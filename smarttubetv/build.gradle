@@ -238,6 +238,11 @@ android {
                 // is skipped and debug keeps replacing release in place, exactly as before.
                 applicationIdSuffix ".debug"
             }
+            // Musicless fork: debug builds start with the release defaults (MUSICLESS_FORK) and the
+            // fork's voice models, without -PforkAppId. The updater stays NewTube's (no forkUpdateUrl).
+            buildConfigField "boolean", "MUSICLESS_FORK", "true"
+            buildConfigField "String", "MUSICLESS_MODEL_BASE_URL", groovy.json.JsonOutput.toJson(
+                    project.findProperty("musiclessModelBaseUrl") ?: "https://github.com/yshalsager/newtube-musicless/releases/download/musicless-models-v1")
         }
         benchmark {
             initWith release

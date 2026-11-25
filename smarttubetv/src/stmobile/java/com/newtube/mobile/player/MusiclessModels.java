@@ -23,7 +23,7 @@ public final class MusiclessModels {
         "5e3f3048bf2936658a9ab3a9742b2e24765a06cc6c6c7de638aa93ea86330a45"};
     private static final java.util.concurrent.ExecutorService DOWNLOAD = Executors.newSingleThreadExecutor(
             r -> new Thread(r, "Musicless-download"));
-    private static MusiclessModels instance;
+    static MusiclessModels instance; // package-private: tests swap in a store without a download URL
     public static synchronized MusiclessModels get(Context context) {
         if (instance == null) {
             instance = new MusiclessModels(
