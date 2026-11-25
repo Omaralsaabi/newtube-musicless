@@ -927,6 +927,8 @@ public class MobileBrowseActivity extends MobileActivity
      * AppDataSourceManager's TV categories through the AppDialog renderer; the tree now lives in
      * {@link com.newtube.mobile.ui.settings.SettingsPages}.
      */
+    private static final int REQUEST_OPEN_FILE = 7301;
+
     private void openSettings() {
         startActivity(com.newtube.mobile.ui.settings.MobileSettingsActivity.intent(this, null));
     }
@@ -1103,8 +1105,18 @@ public class MobileBrowseActivity extends MobileActivity
         }
 
         addYouDivider();
+        addYouRow(R.drawable.ic_mobile_folder_open, getString(R.string.mobile_open_file),
+                () -> startActivityForResult(com.newtube.mobile.localmedia.LocalMedia.pickIntent(), REQUEST_OPEN_FILE));
         addYouRow(R.drawable.ic_mobile_settings, getString(R.string.header_settings),
                 this::openSettings);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQUEST_OPEN_FILE && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            com.newtube.mobile.localmedia.LocalMedia.play(this, data.getData(), data);
+        }
     }
 
     private void addYouSectionRow(BrowseSection section) {

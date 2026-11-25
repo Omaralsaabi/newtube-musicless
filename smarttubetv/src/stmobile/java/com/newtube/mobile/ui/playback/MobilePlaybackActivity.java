@@ -7855,6 +7855,10 @@ public class MobilePlaybackActivity extends MobileActivity
             mWatchTitle.setText(item.getTitleFull());
         }
         updateDownloadPill();
+        // A file from the phone (LocalMedia) has no YouTube id: no likes, share, save or channel.
+        boolean youTube = item.videoId != null;
+        findViewById(R.id.mobile_watch_actions).setVisibility(youTube ? View.VISIBLE : View.GONE);
+        findViewById(R.id.mobile_watch_channel_row).setVisibility(youTube ? View.VISIBLE : View.GONE);
         // Channel name has the same bare-reload-Video blanking problem as the title above.
         if (isNewVideo || !TextUtils.isEmpty(item.getAuthor())) {
             mWatchChannelName.setText(item.getAuthor());
