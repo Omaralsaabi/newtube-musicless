@@ -41,8 +41,8 @@ import os
         levels.add(quiet, channels: 1, scale: 44_100.0 / 48_000)
         #expect(levels.decibels(0..<40_000) == "0.0")
         #expect(levels.decibels(49_152..<88_000) == "-6.0", "spans round out to whole 4,096-frame blocks")
-        #expect(VoicePlayer.decibels([0.5, -0.5, 0.5, -0.5]) == "-6.0")
-        #expect(VoicePlayer.decibels([0, 0]) == "-inf")
+        #expect(PlayerEngine.decibels([0.5, -0.5, 0.5, -0.5]) == "-6.0")
+        #expect(PlayerEngine.decibels([0, 0]) == "-inf")
     }
 
     // MARK: AAC decoding
@@ -158,6 +158,21 @@ import os
         await rig.player.close()
     }
 
+    @Test func anAudioDelayDropsThatMuchFromTheStartAndKeepsTime() async throws {
+        // 0.5 s of declared-nowhere delay: the voices at time 0 are the file's samples from 0.5 s.
+        let rig = try PlayerRig(audioDelay: 0.5)
+        await rig.player.start(at: 0)
+        try await rig.eventually { await rig.player.snapshot().status == .playing }
+        let track = try #require(try FMP4Demuxer.parseInit(FMP4Tests.data("140-init.mp4")).audio)
+        let decoder = try AACDecoder(track: track)
+        let reference = try decoder.decode(FMP4Demuxer.parseSegment(FMP4Tests.data("140-seg0.m4s"), track: track))
+        let skip = 22_050 * 2
+        #expect(await rig.stage.firstInput == Array(reference[skip..<(skip + 200)]))
+        #expect(rig.lines.contains { $0.hasPrefix("voices first-audio") && $0.contains(" at=0.00 ") })
+        #expect(rig.lines.contains { $0.contains("delayMs=500.0") })
+        await rig.player.close()
+    }
+
     @Test func aRefusedSegmentFailsWithTheRecoveryHint() async throws {
         let rig = try PlayerRig(refuseFrom: 200_000)  // segment 1's remainder is refused
         await rig.player.start(at: 0)
@@ -171,8 +186,9 @@ import os
 
 // MARK: - Fixtures
 
-/// Big Buck Bunny's AAC fixture as a two-segment file: init, a sidx rewritten to reference only the
-/// two recorded segments, then the segments (≈ 20 s, 324 KB).
+/// A Big Buck Bunny fixture as a two-segment file: init, a sidx rewritten to reference only the two
+/// recorded segments, then the segments. itag 140: AAC, ≈ 20 s, 324 KB; itag 160: H.264 144p,
+/// 0–4.03 s and 4.03–8.37 s, 23 KB.
 struct TwoSegmentFile {
     let body: Data
     let segments: [Data]
@@ -180,16 +196,18 @@ struct TwoSegmentFile {
     let indexRange: ClosedRange<Int64>
     let mediaFile: MediaFile
 
-    init() throws {
-        let initData = try FMP4Tests.data("140-init.mp4")
-        let sidx = try Self.truncatedIndex(FMP4Tests.data("140-index.sidx"), references: 2)
-        segments = try [FMP4Tests.data("140-seg0.m4s"), FMP4Tests.data("140-seg1.m4s")]
+    init(itag: Int = 140) throws {
+        let initData = try FMP4Tests.data("\(itag)-init.mp4")
+        let sidx = try Self.truncatedIndex(FMP4Tests.data("\(itag)-index.sidx"), references: 2)
+        segments = try [FMP4Tests.data("\(itag)-seg0.m4s"), FMP4Tests.data("\(itag)-seg1.m4s")]
         body = initData + sidx + segments[0] + segments[1]
         initRange = 0...Int64(initData.count - 1)
         indexRange = Int64(initData.count)...Int64(initData.count + sidx.count - 1)
-        let url = URL(string: "https://rr1---sn-edge0aaa.googlevideo.com/videoplayback?itag=140&clen=\(body.count)&mn=sn-edge0aaa")!
-        mediaFile = MediaFile(itag: 140, lastModified: "1700", contentLength: Int64(body.count), url: url)
+        let url = URL(string: "https://rr1---sn-edge0aaa.googlevideo.com/videoplayback?itag=\(itag)&clen=\(body.count)&mn=sn-edge0aaa")!
+        mediaFile = MediaFile(itag: itag, lastModified: "1700", contentLength: Int64(body.count), url: url)
     }
+
+    var source: FMP4Source { FMP4Source(file: mediaFile, initRange: initRange, indexRange: indexRange) }
 
     /// The sidx with `reference_count` cut to `references` (version 0 or 1; first_offset stays 0).
     static func truncatedIndex(_ data: Data, references: Int) throws -> Data {
@@ -206,15 +224,21 @@ struct TwoSegmentFile {
     }
 }
 
-/// A player on the two-segment file with a fake stage, collecting its lines.
+/// An engine on the two-segment files with a fake stage (and, with `video`, the 144p file on a
+/// display layer's renderer), collecting its lines.
 final class PlayerRig: Sendable {
-    let player: VoicePlayer
+    let player: PlayerEngine
     let stage: FakeStage
+    /// Kept alive for its renderer; never touched after init.
+    nonisolated(unsafe) let layer: AVSampleBufferDisplayLayer?
+    let videoStub: MediaStub?
     private let collected = LockedLines()
     var lines: [String] { collected.lines.filter { !$0.hasPrefix("hold ") } }
     var holds: [String] { collected.lines.filter { $0.hasPrefix("hold ") } }
+    var videoLines: [String] { collected.lines.filter { $0.hasPrefix("video ") } }
 
-    init(chunkFrames: Int = 44_100, delays: [Int: Duration] = [:], refuseFrom: Int64? = nil) throws {
+    init(chunkFrames: Int = 44_100, delays: [Int: Duration] = [:], refuseFrom: Int64? = nil, video: Bool = false,
+         audioDelay: Double = 0) throws {
         let file = try TwoSegmentFile()
         let stub = MediaStub()
         stub.serve { request in
@@ -222,13 +246,29 @@ final class PlayerRig: Sendable {
             return .partial(file.body, request)
         }
         let fetcher = MediaFetcher(file: file.mediaFile, session: stub.session, hosts: MediaHostBook(), network: FakeNetwork())
+        var input: VideoInput?
+        if video {
+            let pictures = try TwoSegmentFile(itag: 160)
+            let stub = MediaStub()
+            stub.serve { request in .partial(pictures.body, request) }
+            // A standalone renderer never asks for data on the Mac; a layer's does, on screen or not.
+            let layer = AVSampleBufferDisplayLayer()
+            self.layer = layer
+            videoStub = stub
+            input = VideoInput(source: pictures.source, fetcher: MediaFetcher(file: pictures.mediaFile, session: stub.session,
+                                                                              hosts: MediaHostBook(), network: FakeNetwork()),
+                               renderer: layer.sampleBufferRenderer)
+        } else {
+            layer = nil
+            videoStub = nil
+        }
         stage = FakeStage(chunkFrames: chunkFrames, delays: delays)
-        var configuration = VoicePlayer.Configuration()
+        var configuration = PlayerEngine.Configuration()
         configuration.muted = true
+        configuration.audioDelay = audioDelay
         let sink = collected
-        player = VoicePlayer(source: VoiceSource(file: file.mediaFile, initRange: file.initRange, indexRange: file.indexRange),
-                             fetcher: fetcher, stage: stage, configuration: configuration,
-                             log: { sink.append($0) }, holdLog: { sink.append($0) })
+        player = PlayerEngine(audio: file.source, fetcher: fetcher, stage: stage, video: input, configuration: configuration,
+                              log: { sink.append($0) }, holdLog: { sink.append($0) })
     }
 
     func eventually(timeout: Duration = .seconds(5), _ condition: () async -> Bool) async throws {
@@ -263,6 +303,8 @@ actor FakeStage: VoiceStage {
     private var chunkIndex = 0
     private var waiter: CheckedContinuation<Void, Never>?
     private var stats = VoiceHoldStats()
+    /// The first samples received since the last flush.
+    private(set) var firstInput: [Float] = []
 
     init(chunkFrames: Int, delays: [Int: Duration]) {
         self.chunkFrames = chunkFrames
@@ -283,6 +325,7 @@ actor FakeStage: VoiceStage {
 
     private func reset() {
         generation += 1
+        firstInput = []
         pending = []
         emittedFrames = 0
         queue = []
@@ -293,6 +336,7 @@ actor FakeStage: VoiceStage {
     func enqueue(_ samples: [Float], generation token: Int) async {
         guard token == generation, !closed else { return }
         if stats.inputReadyAt == nil { stats.inputReadyAt = .now }
+        if firstInput.count < 200 { firstInput += samples.prefix(200 - firstInput.count) }
         pending += samples
         while pending.count >= chunkFrames * 2 { cut(chunkFrames) }
         wake()

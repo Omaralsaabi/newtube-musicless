@@ -73,16 +73,25 @@ extension FMP4Track {
                                            sampleCount: 1, sampleTimingEntryCount: 1, sampleTimingArray: &timing,
                                            sampleSizeEntryCount: 1, sampleSizeArray: &size, sampleBufferOut: &buffer)
         guard status == noErr, let buffer else { throw FMP4CoreMediaError.status("sample buffer", status) }
-        if kind == .video && !sample.isSync,
-           let attachments = CMSampleBufferGetSampleAttachmentsArray(buffer, createIfNecessary: true),
-           CFArrayGetCount(attachments) > 0 {
-            let dictionary = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
-            CFDictionarySetValue(dictionary, Unmanaged.passUnretained(kCMSampleAttachmentKey_NotSync).toOpaque(),
-                                 Unmanaged.passUnretained(kCFBooleanTrue).toOpaque())
-            CFDictionarySetValue(dictionary, Unmanaged.passUnretained(kCMSampleAttachmentKey_DependsOnOthers).toOpaque(),
-                                 Unmanaged.passUnretained(kCFBooleanTrue).toOpaque())
+        if kind == .video && !sample.isSync {
+            Self.setAttachment(kCMSampleAttachmentKey_NotSync, on: buffer)
+            Self.setAttachment(kCMSampleAttachmentKey_DependsOnOthers, on: buffer)
         }
         return buffer
+    }
+
+    /// Decoded but not shown: frames between a seek's keyframe and its target (PRD §4.2), and frames
+    /// already late while the picture catches up after the background.
+    public static func markDoNotDisplay(_ buffer: CMSampleBuffer) {
+        setAttachment(kCMSampleAttachmentKey_DoNotDisplay, on: buffer)
+    }
+
+    private static func setAttachment(_ key: CFString, on buffer: CMSampleBuffer) {
+        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(buffer, createIfNecessary: true),
+              CFArrayGetCount(attachments) > 0 else { return }
+        let dictionary = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
+        CFDictionarySetValue(dictionary, Unmanaged.passUnretained(key).toOpaque(),
+                             Unmanaged.passUnretained(kCFBooleanTrue).toOpaque())
     }
 }
 

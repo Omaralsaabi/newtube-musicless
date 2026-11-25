@@ -525,6 +525,84 @@ Personal Team test (Q8, D15) moves with them: there is still no paid-only capabi
   `voices stop reason=stop button|left the screen|new video`. Two early "lock" runs turned out to be
   the developer stopping playback; the reason line now tells those apart.
 
+### D44. Video, sync and seek — US-013
+
+- **`PlayerEngine`** (the US-012 player, renamed) carries an optional `VideoInput`: the H.264 file, its
+  fetcher, and a display layer's `sampleBufferRenderer` on the same synchronizer.
+  - Samples stay compressed; the renderer decodes them in hardware.
+  - They're pulled by `requestMediaDataWhenReady`; the renderer keeps 1–2 s queued (Mac probe and
+    iPhone).
+  - `VideoInput` is `@unchecked Sendable`: the SDK doesn't mark the renderer Sendable, but it exists
+    to be fed off the main thread, and only the engine's queue touches it.
+  - A standalone `AVSampleBufferVideoRenderer` never asks for data on the Mac; one taken from a
+    layer does, on screen or not, so tests use a layer.
+- **Edit lists:** YouTube's H.264 starts at PTS one frame (512/15,360 at 144p, 1001/30,000 at 30 fps)
+  with an edit list of the same value, and the engine applies it, so frame 0 shows at 0. The
+  cross-check: the same video's VP9 file (WebM, no reordering) has its first block at 0.00 ms.
+  Android's media3 applies the same single-edit offset.
+- **Hold:** starvation now counts the picture too: less than 0.25 s of displayable frames queued, while
+  in the foreground and not catching up. The start and seek holds wait for both tracks.
+- **Seek (PRD §4.2):**
+  - Both renderers and the stage are flushed.
+  - The picture restarts at the target segment's keyframe. Frames before the target get
+    `kCMSampleAttachmentKey_DoNotDisplay`: decoded, not shown.
+  - The first shown frame in decode order can be up to a few frames past the target (B-frames);
+    the target's own frame follows it and is shown.
+- **The Remove-music switch restarts only the audio.** The queued picture stays valid at the same
+  clock time, so it isn't flushed or refetched.
+- **Segment cache and prefetch:**
+  - A per-file LRU cache (16 MB audio, 48 MB video) serves seeks back and switches without a request.
+    Many segments fit, so the one being played is never the one a new write evicts.
+  - Video prefetches one group: a 1080p segment (1–2.5 MB) is requested as soon as the previous one
+    is handed out, not when the renderer runs short.
+- **Background without PiP:**
+  - `didEnterBackground` stops the video feed and fetch; the voices play on.
+  - **Measured, not fed:** the renderer still fails in the background with `requiresFlushToResumeDecoding`
+    and AVFoundation error -11847 (`AVErrorOperationInterrupted`). This settles the PRD §4.2
+    `[verify]` item.
+  - `willEnterForeground` flushes the renderer and restarts at the segment holding the playhead.
+    Frames earlier than the playhead + 0.1 s are hidden while it catches up, and that catch-up doesn't
+    hold the voices.
+  - If the renderer fails while feeding, the video stops quietly and the next activation restarts it.
+    Not a playback failure.
+- **YouTube's AAC runs 38.9 ms late, undeclared, and the engine compensates** (closes D42's
+  question):
+  - `--sync-check` decodes a sync test ("Five minute sync test", `szoOsG9137U`, a sweep with "Bip!"
+    and its waveform drawn on frame 0 of every second, 480p30).
+  - On the engine's timeline, the AAC beeps land 84.5 ms after their frames (83.8–85.0, 40 pairs).
+    The same audio decoded from YouTube's Opus file lands at 45.5 ms. That file's WebM header states
+    its delay: `pre_skip` 312, `CodecDelay` 6.5 ms, subtracted.
+  - So the AAC is 39.0 ms later than the Opus. `--delay-check` cross-correlates the two decodes on any
+    video: 38.9 ms for 4 of 5 (correlation 0.987–0.997), and 33.9 ms for Sintel, an older upload.
+  - None of this is declared: no `elst`, no gapless tag (D42).
+  - `PlayerEngine.Configuration.audioDelay` moves the audio earlier by a given amount and drops what
+    falls before 0. The app sets 38.9 ms for AAC-LC at 44.1 kHz (`YouTubeAudio`); for Sintel that's
+    5 ms early, which nobody can hear.
+  - After the trim, the engine's AAC beeps land at 45.6 ms: the Opus/WebM timeline to 0.1 ms.
+  - The remaining 45.5 ms is in YouTube's encoding of that upload. Its Opus, VP9 and AAC all agree,
+    so any correct player shows it.
+  - **Differs from Android:** media3 sees no encoder delay and plays YouTube's AAC about 39 ms late.
+  - Apple's Opus decoder returned 120 frames (2.5 ms) fewer than packets × 960. Whether those are held
+    back or dropped is unknown, so the reference carries ±2.5 ms.
+- **Renderer clocks:** each renderer's timebase stays within 0.02 ms of the synchronizer's clock
+  (`audioClockMs`/`videoClockMs` on the position line), so both present on one clock. The
+  synchronizer compensates audio output latency itself. A slow-motion recording of the screen and
+  speaker, the PRD's last check of the output side, still needs the developer.
+- **Measured on the iPhone** (home Wi-Fi, Debug build, 2026-11-25; Sintel at 1080p, 1920×818 avc1):
+  - **Seeks:** median **938 ms** over 10 seeks (445–1,420), and **456 ms** (328–647) in a second run
+    of the final build, against the 1.5 s target.
+  - **Picture after the background:** the first frame is shown **94–163 ms** after the return
+    (median 129, 3 rounds, unattended: the app opens the Files app, and `devicectl … launch` brings
+    it back). The voices never stopped.
+  - **Start with the picture:** tap to first voices and picture took 1.0–2.4 s. The slow case was
+    the video's first request to an unproven node (881 ms).
+  - Both tracks stay 1.5–2.2 s queued while playing.
+- **Test harness:**
+  - The debug screen is now "Watch (debug)": picture on top, an "Audio only" switch, and a
+    "Preparing voices…" overlay.
+  - Launch flags: `--seek-check`, `--background-test`, `--sync-check [<id>] [--sync-seconds <s>]
+    [--sync-frames]` and `--delay-check [<id> …]`.
+
 ## Settled `[verify]` items
 
 | PRD item | Result | Evidence |
@@ -540,4 +618,6 @@ Personal Team test (Q8, D15) moves with them: there is still no paid-only capabi
 | §4.3: "a few milliseconds with vDSP; the models dominate" | Yes: 12 ms of DSP in a 258 ms F=512 window on the A15 | `BENCHMARKS.md` |
 | §4.5: the GPU is unavailable in the background | Confirmed: CoreML `ALL` fails every locked inference (error -6) | `BENCHMARKS.md` |
 | §4.5: whether the Neural Engine keeps serving a locked-screen app | **Still open.** The `CPUAndNeuralEngine` sessions run locked at foreground speed, but probably on the CPU (thread CPU = wall time), so this says nothing about the Neural Engine. Irrelevant while ORT CPU is the backend | `BENCHMARKS.md` |
+| §4.2: a display layer fed in the background fails "with an interruption error" | **True, even unfed:** the video renderer turns `requiresFlushToResumeDecoding`, status failed, AVFoundation -11847 (`AVErrorOperationInterrupted`); a flush on return resets it (D44) | `--background-test` on the iPhone |
+| §4.2: AAC priming is signalled by an edit list, to be trimmed | **False** (D42); YouTube's AAC runs 38.9 ms later than its Opus, undeclared; the engine trims a fixed 38.9 ms (D44) | `--sync-check`, `--delay-check` |
 | §4.3: Spleeter's U-Net is Neural-Engine-friendly | Not established, for the same reason; would need a static-shape Core ML model (US-007's route) | — |

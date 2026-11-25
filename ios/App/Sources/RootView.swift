@@ -44,7 +44,7 @@ struct RootView: View {
                         Label("Separation benchmark", systemImage: "speedometer")
                     }
                     NavigationLink(value: Route.voices(id: nil, at: 0)) {
-                        Label("Voices only", systemImage: "person.wave.2")
+                        Label("Watch (debug)", systemImage: "play.rectangle")
                     }
                     ModelStatusRow()
                 }
@@ -56,7 +56,11 @@ struct RootView: View {
                 case .benchmark(let autoStart):
                     BenchmarkView(benchmark: SeparationBenchmark(models: models), autoStart: autoStart)
                 case .voices(let id, let at):
-                    if let voices { VoicesCheckView(check: voices, autoPlay: id.map { ($0, at) }) }
+                    if let voices {
+                        VoicesCheckView(check: voices, autoPlay: id.map { ($0, at) },
+                                        seekCheck: ProcessInfo.processInfo.arguments.contains("--seek-check"),
+                                        backgroundTest: ProcessInfo.processInfo.arguments.contains("--background-test"))
+                    }
                 }
             }
         }
@@ -79,6 +83,21 @@ struct RootView: View {
             if arguments.contains("--resolve-check") { Task { await PlayerCheckRunner.runUS009(record: false) } }
             if arguments.contains("--record-answers") { Task { await PlayerCheckRunner.runUS009(record: true) } }
             if arguments.contains("--fetch-check") { Task { await FetchCheckRunner.run() } }
+            // `--sync-check [<id>] [--sync-seconds <s>]`: beep and flash timing of a sync test video (US-013).
+            if let index = arguments.firstIndex(of: "--sync-check") {
+                let next = arguments.indices.contains(index + 1) ? arguments[index + 1] : ""
+                let seconds = arguments.firstIndex(of: "--sync-seconds")
+                    .flatMap { arguments.indices.contains($0 + 1) ? Double(arguments[$0 + 1]) : nil } ?? 40
+                Task { await SyncCheck.run(videoID: next.hasPrefix("--") || next.isEmpty ? nil : next, seconds: seconds) }
+            }
+            // `--delay-check [<id> …]`: AAC vs Opus delay by cross-correlation (US-013); presets by default.
+            if let index = arguments.firstIndex(of: "--delay-check") {
+                let ids = arguments[(index + 1)...].prefix { !$0.hasPrefix("--") }
+                let seconds = arguments.firstIndex(of: "--sync-seconds")
+                    .flatMap { arguments.indices.contains($0 + 1) ? Double(arguments[$0 + 1]) : nil } ?? 30
+                Task { await SyncCheck.runDelay(videoIDs: ids.isEmpty ? VoicesCheck.presets.map(\.id) + SyncCheck.candidates : Array(ids),
+                                                seconds: seconds) }
+            }
             // `--voices [<id>] [--voices-at <seconds>]` plays a video's voices at launch (US-012).
             if path.isEmpty, let index = arguments.firstIndex(of: "--voices") {
                 let next = arguments.indices.contains(index + 1) ? arguments[index + 1] : ""

@@ -85,15 +85,36 @@ struct SeparatorStage: VoiceStage {
     func close() async { await separator.close() }
 }
 
-/// A video's audio file as the player needs it, from one VISIONOS `/player` request (the source walk
-/// that tries other clients is US-015).
-struct ResolvedAudio: Sendable {
+/// A video's files as the engine needs them, from one VISIONOS `/player` request (the source walk
+/// that tries other clients is US-015): the AAC file and, unless audio only, the H.264 file.
+struct ResolvedMedia: Sendable {
     var videoID: String
     var title: String
     var author: String
-    var source: VoiceSource
-    var mimeType: String
+    var audio: FMP4Source
+    var audioMime: String
+    var video: FMP4Source?
+    /// `1080p60 avc1.640028`, for the screen and the log.
+    var videoLabel: String?
+    /// The best Opus file (WebM), the sync check's reference: Opus states its encoder delay.
+    var opus: MediaFile?
+    /// The smallest VP9 file (WebM): the sync check's cross-check of the video timeline.
+    var vp9: MediaFile?
+    /// Seconds the AAC runs late without declaring it (`YouTubeAudio.delay`), for the engine.
+    var audioDelay: Double
     var playerMs: Int
+}
+
+/// YouTube's AAC-LC at 44.1 kHz runs 38.9 ms later than its Opus for the same audio, which no edit
+/// list or gapless tag declares: measured by cross-correlating the two decodes of 5 videos (4 at
+/// 38.9 ms, an older upload at 33.9 ms) and by a sync test's beeps (39.0 ms). The engine moves the
+/// AAC earlier by this much so it lands on the timeline Opus states (DECISIONS D44). Android doesn't.
+enum YouTubeAudio {
+    static let aacDelay = 0.0389
+
+    static func delay(codecs: String, sampleRate: Int?) -> Double {
+        codecs == "mp4a.40.2" && sampleRate == 44_100 ? aacDelay : 0
+    }
 }
 
 struct ResolveError: Error, CustomStringConvertible {
@@ -102,7 +123,7 @@ struct ResolveError: Error, CustomStringConvertible {
 
 enum VideoResolver {
     @MainActor
-    static func audio(for videoID: String) async throws -> ResolvedAudio {
+    static func media(for videoID: String, withVideo: Bool) async throws -> ResolvedMedia {
         let services = PlaybackServices.shared
         let transport = services.transport, identity = services.identity
         let start = ContinuousClock.now
@@ -117,15 +138,41 @@ enum VideoResolver {
         guard answer.kind == .served else {
             throw ResolveError(description: "VISIONOS: \(answer.kind.logValue) \(answer.playability.reason ?? "")")
         }
-        guard let format = FormatSelector.select(answer).audio, let address = format.url, let url = URL(string: address),
-              let length = format.contentLength, let initRange = format.initRange, let indexRange = format.indexRange else {
+        let selection = FormatSelector.select(answer)
+        guard let audioFormat = selection.audio, let audio = source(audioFormat) else {
             throw ResolveError(description: "no AAC file with ranges in the answer")
         }
-        let file = MediaFile(itag: format.itag, lastModified: format.lastModified, contentLength: length, url: url)
-        return ResolvedAudio(videoID: videoID, title: answer.details?.title ?? videoID, author: answer.details?.author ?? "",
-                             source: VoiceSource(file: file, initRange: initRange.start...initRange.end,
-                                                 indexRange: indexRange.start...indexRange.end),
-                             mimeType: format.mimeType, playerMs: Int((ContinuousClock.now - start) / .milliseconds(1)))
+        var video: FMP4Source?, label: String?
+        if withVideo {
+            guard let videoFormat = selection.video, let picture = source(videoFormat) else {
+                throw ResolveError(description: "no H.264 file with ranges in the answer")
+            }
+            video = picture
+            label = "\(videoFormat.shortSide ?? 0)p\(videoFormat.fps ?? 30) \(videoFormat.codecs)"
+        }
+        let opus = answer.adaptiveFormats
+            .filter { $0.container == "audio/webm" && $0.codecs == "opus" && $0.url != nil && $0.contentLength != nil }
+            .max { ($0.bitrate ?? 0) < ($1.bitrate ?? 0) }
+            .flatMap { format in URL(string: format.url!).map {
+                MediaFile(itag: format.itag, lastModified: format.lastModified, contentLength: format.contentLength!, url: $0)
+            } }
+        let vp9 = answer.adaptiveFormats
+            .filter { $0.container == "video/webm" && $0.codecs.hasPrefix("vp9") && $0.url != nil && $0.contentLength != nil }
+            .min { ($0.shortSide ?? .max) < ($1.shortSide ?? .max) }
+            .flatMap { format in URL(string: format.url!).map {
+                MediaFile(itag: format.itag, lastModified: format.lastModified, contentLength: format.contentLength!, url: $0)
+            } }
+        return ResolvedMedia(videoID: videoID, title: answer.details?.title ?? videoID, author: answer.details?.author ?? "",
+                             audio: audio, audioMime: audioFormat.mimeType, video: video, videoLabel: label, opus: opus, vp9: vp9,
+                             audioDelay: YouTubeAudio.delay(codecs: audioFormat.codecs, sampleRate: audioFormat.audioSampleRate),
+                             playerMs: Int((ContinuousClock.now - start) / .milliseconds(1)))
+    }
+
+    private static func source(_ format: PlayerAnswer.Format) -> FMP4Source? {
+        guard let address = format.url, let url = URL(string: address), let length = format.contentLength,
+              let initRange = format.initRange, let indexRange = format.indexRange else { return nil }
+        return FMP4Source(file: MediaFile(itag: format.itag, lastModified: format.lastModified, contentLength: length, url: url),
+                          initRange: initRange.start...initRange.end, indexRange: indexRange.start...indexRange.end)
     }
 }
 

@@ -81,8 +81,14 @@ xcrun devicectl device process launch --device "$DEVICE_ID" --terminate-existing
   MediaFetcher, first-chunk and fallback timing), `--record-media` (US-011: Big Buck Bunny init,
   index and two segments per file to Documents/media), `--record-answers` (fixture answers,
   scrubbed, to Documents/answers; copy them off with `devicectl device copy from`),
-  `--voices [<id>] [--voices-at <s>]` (US-012: the "Voices only" screen plays a video's voices;
-  default Big Buck Bunny. Its `voices chunk` lines compare input and voices dB over the same span).
+  `--voices [<id>] [--voices-at <s>]` (US-012/013: the "Watch (debug)" screen plays a video, picture
+  and voices; default Big Buck Bunny. Its `voices chunk` lines compare input and voices dB over the
+  same span), with `--seek-check` (10 timed seeks) or `--background-test` (3 unattended trips to the
+  Files app; bring the app back with `devicectl device process launch` *without*
+  `--terminate-existing`), `--sync-check [<id>]` (beeps vs marker frames, AAC vs Opus) and
+  `--delay-check [<id> …]` (AAC vs Opus delay by cross-correlation).
+- YouTube's AAC runs 38.9 ms late, undeclared; the engine compensates (`YouTubeAudio.aacDelay`,
+  DECISIONS D44). Re-measure with `--delay-check` before changing it.
 - The phone must be unlocked for `devicectl … launch` ("Locked" error otherwise). Killing a
   `--console` launch terminates the app, so give captures a timer longer than the test.
 - Answer fixtures must go through `AnswerScrubber` (no visitor ids, no requester IP); the
