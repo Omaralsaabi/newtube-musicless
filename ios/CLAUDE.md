@@ -75,7 +75,10 @@ xcrun devicectl device process launch --device "$DEVICE_ID" --terminate-existing
   shows; OSLog alone never reaches it (Release builds: add `--console-log`). Categories: `Musicless`,
   `NetPath`, `Player`, `Probe`, `Benchmark`.
 - Launch flags: `--run-probe` (device probe), `--download-models`, `--benchmark` /
-  `--benchmark-locked` (US-006; time it in a **Release** build, `-configuration Release`).
+  `--benchmark-locked` (US-006; time it in a **Release** build, `-configuration Release`),
+  `--player-check` (US-008: VISIONOS /player with the real and a -1 timestamp, media probes).
+- googlevideo cache nodes can be unreachable on one network and fine on another (DECISIONS D39):
+  when media times out, check the assigned host before suspecting the code.
 
 ## Separation test data (all gitignored, rebuilt by scripts)
 

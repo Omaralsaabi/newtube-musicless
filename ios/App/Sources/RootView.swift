@@ -64,6 +64,8 @@ struct RootView: View {
             if path.isEmpty, arguments.contains("--benchmark") || arguments.contains("--benchmark-locked") {
                 path = [.benchmark(autoStart: arguments.contains("--benchmark-locked"))]
             }
+            // `--player-check` asks VISIONOS for five ordinary videos with the real and a -1 timestamp (US-008).
+            if arguments.contains("--player-check") { Task { await PlayerCheckRunner.run() } }
             AppLog.musicless.info("Model status \(models.status.logValue)")
             // `--download-models` starts the voice-model download at launch (no auto-start yet: D25).
             if ProcessInfo.processInfo.arguments.contains("--download-models") { models.start() }

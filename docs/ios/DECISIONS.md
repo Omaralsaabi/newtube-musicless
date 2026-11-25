@@ -296,6 +296,59 @@ launch (DEVICE-PROBE.md), so they would buy nothing and would make the app need 
 when playback (video + audio + separation, Phase 2) is measured against the 700 MB budget. The free
 Personal Team test (Q8, D15) moves with them: there is still no paid-only capability to test.
 
+## Phase 2
+
+### D37. InnerTube requests: QueryBuilder's template, ported literally — US-008
+
+- `ClientProfile` holds VISIONOS, TV_TIZEN, WEB_EMBED, ANDROID_VR, ANDROID_REEL and IOS, copied from
+  MediaServiceCore `52fecea0` (2026-10-20) with the source of every value in comments.
+- `PlayerRequestBody` builds the body the way `QueryBuilder.build()` does (a multi-line template,
+  lines trimmed and joined, trailing object commas removed outside strings), so spacing quirks such
+  as `"clientName": "…"` next to `"osName":"visionOS"` come out identical. The test compares the
+  VISIONOS body with one reconstructed by hand from the Kotlin template, byte for byte.
+- `acceptLanguage` is the BCP-47 tag (Android's `Locale.toLanguageTag()`, e.g. `en-US`), not the bare
+  language code.
+- Headers as `VideoInfoApi`: Content-Type, Origin, `X-Goog-Visitor-Id` (same visitor as the body), the
+  client's UA, name id and version; no Referer, no Cookie, no key; 8 s timeout. One URLSession with no
+  cookie jar and no cache.
+- The visitor comes from `youtube.com/tv` with the Fire TV UA, replaying the stored
+  `VISITOR_INFO1_LIVE` plus the SOCS consent cookie (`AppServiceInt`, including `nextVisitorCookie`'s
+  rule that an answer without the cookie can't erase the identity); it persists for 10 h in
+  Application Support. The signature timestamp comes from the TV player JS with
+  `signatureTimestamp[:=](\d+)` (Android's `signatureTimestamp:(\d+)`, plus `=`), once per player
+  URL, persisted; -1 when unknown.
+- Every request logs `api client=… status=… ms=… protocol=…`. **On the iPhone (2026-11-25):** `tv`,
+  `player-js` and every `/player` request ran over `h2`.
+
+### D38. VISIONOS serves with `signatureTimestamp = -1` — US-008
+
+- **/player, on the iPhone, 5 ordinary videos:** VISIONOS answered `OK` with the same adaptive
+  formats, all with plain URLs (no cipher), SABR and HLS markers, whether the body carried the real
+  timestamp (20779, player `b485e332`) or -1. So VISIONOS doesn't need the timestamp to *answer*.
+  /player took 118–229 ms.
+- **Media, on the iPhone over cellular (2026-11-25):** the first KiB of every answer's audio
+  (Range header) came back **206 for 10 of 10 answers, 5 of 5 with -1**. VISIONOS needs no real
+  timestamp; the engine still sends it when known, as Android does.
+- **On the developer's home Wi-Fi the same probe timed out:** the googlevideo cache node YouTube
+  assigned there refused TCP connections from the phone and the Mac alike, while
+  `redirector.googlevideo.com` and other nodes answered, and the redirector sent the request back to
+  the dead node. The official YouTube app played fine on that Wi-Fi at the same time, so its player
+  gets around such a node.
+
+### D39. googlevideo host fallback through the URL's `mn` nodes — for US-010
+
+- **Evidence (iPhone, home Wi-Fi, 2026-11-25, 10 answers):** every assigned node timed out, and
+  several different ones of the same local cache group did (`rrN---sn-<isp>-…`). Retrying the same
+  signed URL on the URL's alternate node (`rrN---<other mn entry>.googlevideo.com`, same replica
+  prefix) served **206 for 10 of 10**, with -1 timestamps too. Cellular reached the assigned nodes
+  directly. Android has no such fallback (no `mn` or `redirector` handling in MediaServiceCore or
+  the app), so it would stall on this network.
+- **Plan for US-010:** the MediaFetcher retries a connection failure or timeout on the `mn`
+  alternates, then remembers the dead node for the session, so later requests go straight to one that
+  answers. It needs a short connect timeout on the first attempt (each fallback above first waited
+  10 s, which would break G2's 2.5 s start): measure the value in US-010. This differs from Android
+  on purpose; a 403 is still handled by re-resolving, never by changing hosts (PRD §0.4).
+
 ## Settled `[verify]` items
 
 | PRD item | Result | Evidence |
