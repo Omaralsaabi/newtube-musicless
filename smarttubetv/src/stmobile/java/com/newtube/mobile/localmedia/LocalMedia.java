@@ -30,25 +30,21 @@ public final class LocalMedia {
     }
 
     /**
-     * {@code intent} carries the file's read grant. It is tied to the screen that received it, but
+     * The file's read grant is tied to the screen that received it, but
      * the player is another screen that opens and seeks the file later: keep the access for the app.
      */
-    public static void play(Context context, Uri uri, Intent intent) {
-        keepReadAccess(context, uri, intent);
+    public static void play(Context context, Uri uri) {
+        keepReadAccess(context, uri);
         Video video = new Video();
         video.title = displayName(context, uri);
         video.localUri = uri.toString();
         PlaybackPresenter.instance(context).openVideo(video);
     }
 
-    private static void keepReadAccess(Context context, Uri uri, Intent intent) {
+    private static void keepReadAccess(Context context, Uri uri) {
         try {
-            if ((intent.getFlags() & Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) != 0) {
-                context.getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            } else {
-                // Not tied to a screen: lasts until the phone restarts.
-                context.grantUriPermission(context.getPackageName(), uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            }
+            // Not tied to a screen: lasts until the phone restarts. Nothing reopens a file later.
+            context.grantUriPermission(context.getPackageName(), uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
         } catch (SecurityException e) {
             Log.w(TAG, "can't keep access to " + uri + ": " + e); // still plays while the grant lasts
         }

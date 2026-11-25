@@ -1115,7 +1115,7 @@ public class MobileBrowseActivity extends MobileActivity
     protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == REQUEST_OPEN_FILE && resultCode == RESULT_OK && data != null && data.getData() != null) {
-            com.newtube.mobile.localmedia.LocalMedia.play(this, data.getData(), data);
+            com.newtube.mobile.localmedia.LocalMedia.play(this, data.getData());
         }
     }
 

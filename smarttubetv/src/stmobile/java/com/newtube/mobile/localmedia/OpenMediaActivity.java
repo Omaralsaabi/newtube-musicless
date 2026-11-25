@@ -11,7 +11,7 @@ public final class OpenMediaActivity extends Activity {
         super.onCreate(savedInstanceState);
         Uri uri = getIntent().getData();
         if (uri != null) {
-            LocalMedia.play(this, uri, getIntent());
+            LocalMedia.play(this, uri);
         }
         finish();
     }
