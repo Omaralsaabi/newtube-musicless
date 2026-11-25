@@ -77,7 +77,8 @@ xcrun devicectl device process launch --device "$DEVICE_ID" --terminate-existing
 - Launch flags: `--run-probe` (device probe), `--download-models`, `--benchmark` /
   `--benchmark-locked` (US-006; time it in a **Release** build, `-configuration Release`),
   `--player-check` (US-008: VISIONOS /player with the real and a -1 timestamp, media probes),
-  `--resolve-check` (US-009: 10 videos, one request each), `--record-answers` (fixture answers,
+  `--resolve-check` (US-009: 10 videos, one request each), `--fetch-check` (US-010: AAC files through
+  MediaFetcher, first-chunk and fallback timing), `--record-answers` (fixture answers,
   scrubbed, to Documents/answers; copy them off with `devicectl device copy from`).
 - Answer fixtures must go through `AnswerScrubber` (no visitor ids, no requester IP); the
   `fixturesCarryNoAddressOrVisitor` test re-checks every committed one.

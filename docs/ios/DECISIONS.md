@@ -378,6 +378,36 @@ Personal Team test (Q8, D15) moves with them: there is still no paid-only capabi
 - **On the iPhone:** 10 of 10 ordinary videos resolved with one VISIONOS request each (119–495 ms),
   picking 1080p avc1 where offered (60 fps for the 60 fps video) and itag 140 (AAC-LC 44.1 kHz).
 
+### D41. The media fetcher — US-010
+
+- `MediaFetcher` (MediaPipeline, no YouTube types: a `MediaFile` is itag + lmt + clen + URL) reads
+  byte ranges through a `Range` header only, with `assumesHTTP3Capable`, on one cookie-less,
+  cache-less media URLSession. Sequential reads (`chunks(from:)`, pull-based) start at 256 KiB after
+  every start, seek or repoint and double to 2 MiB.
+- **Measured on the iPhone (home Wi-Fi, 2026-11-25):** the first 256 KiB took 67–374 ms once a node
+  was proven, against 712–1,980 ms for a 2 MiB first request; later 0.5–2 MiB chunks 74–488 ms; whole
+  AAC files at 2.3–8.6 MiB/s. So the 256 KiB → 2 MiB ramp stays. googlevideo nodes spoke HTTP/1.1
+  over TCP (curl on the Mac too) and h3 only occasionally; that's the server side.
+- A 403 (or 401) is a typed `MediaRefused(itag, byteOffset, url, status)`, never retried on that URL.
+  The caller maps the offset to stream time (sidx) for the wall rule (US-017), walks for a new answer,
+  `repoint(to:)`s, and resumes from the offset. `repoint` only accepts the same file (itag, lmt, clen).
+- Timeouts and 5xx get 3 retries with exponential backoff from 250 ms; a lost link
+  (`networkConnectionLost`, `notConnectedToInternet`, …) waits on `NWPathMonitor` for a usable path
+  first. A 200 for a partial range is an error (the server ignored `Range`).
+- **Host fallback (D39), as built:** a node not yet seen answering on this network gets a 2 s idle
+  timeout and, if still silent after 750 ms, its URL's next node (`mn`) starts in parallel; the first
+  answer wins and the loser is cancelled and marked dead. Dead nodes, and the rest of their cluster
+  (`sn-<cluster>-…`), go after the alternates until the network signature changes (then the book
+  starts over: cellular reached the same cluster). Nodes that answered go first. Measured: a dead node
+  costs ~0.75 s once per network; later videos go straight to working nodes.
+- `NetworkWatcher` waits for `NWPathMonitor`'s first path before reporting a signature (up to 0.5 s):
+  answering "unknown" first made the book take the real signature as a network change and forget
+  what it had learned (seen on the device: the dead node was asked again).
+- **Known limitation:** the race times a request's completion, not its first byte, so a large
+  request to an unproven node can start a needless duplicate. The pipeline's first request to a node
+  is small (256 KiB, init or index ranges), so it rarely matters; the fix would be a streaming task
+  delegate that signals the response headers.
+
 ## Settled `[verify]` items
 
 | PRD item | Result | Evidence |
