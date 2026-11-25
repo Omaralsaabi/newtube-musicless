@@ -397,7 +397,9 @@
     <string name="mobile_download_state_downloading">Downloading · %1$d%% · %2$s of %3$s</string>
     <string name="mobile_download_state_downloading_bytes">Downloading · %1$s</string>
     <string name="mobile_download_state_processing">Finishing…</string>
+    <string name="mobile_download_state_removing_music">Removing music · %1$d%%</string>
     <string name="mobile_download_error_generic">Download failed. Tap to retry.</string>
+    <string name="mobile_download_error_music">Couldn\'t remove the music. Tap to retry.</string>
     <string name="mobile_download_error_link">Download link expired. Tap to retry.</string>
     <string name="mobile_download_done_title">Download complete</string>
     <string name="mobile_download_play">Play</string>

@@ -38,6 +38,8 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
     private Worker worker;
     private boolean acquired;
     private volatile boolean waitingForDownload;
+    /** The source already has only voices (a download whose music was removed): skip the model. */
+    volatile boolean passThrough;
     volatile long inputReadyNs, queueMs, waitModelMs, inferMs;
     void beginHold() { inputReadyNs = 0; queueMs = waitModelMs = inferMs = 0; }
 
@@ -176,6 +178,8 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
 
     boolean hasPendingData() { return receivedFrames > emittedFrames; }
 
+    boolean hasFailed() { return failed; }
+
     @Override
     public boolean isEnded() {
         return super.isEnded() && emittedFrames == receivedFrames;
@@ -257,6 +261,7 @@ final class MusiclessAudioProcessor extends BaseAudioProcessor {
         MusiclessDsp full;
         float[] mask;
         @Override float[] infer(float[] block) throws Exception {
+            if (passThrough) return block.clone();
             MusiclessModelHolder holder = MusiclessModelHolder.get();
             long wait = System.nanoTime();
             holder.load(MusiclessModels.get(context));

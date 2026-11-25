@@ -65,6 +65,7 @@ public class Media3PlayerController implements Player.Listener {
     });
 
     private final Context mContext;
+    private boolean mNextSourceVoicesOnly;
     private final Media3SourceFactory mMediaSourceFactory;
     private final PlayerEventListener mEventListener;
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
@@ -463,6 +464,8 @@ public class Media3PlayerController implements Player.Listener {
 
     public void openUrlList(List<String> urlList) {
         mReadinessAnswer = null;
+        mNextSourceVoicesOnly = urlList != null && urlList.size() == 1
+                && com.newtube.mobile.downloads.DownloadRegistry.instance(mContext).isVoicesOnly(urlList.get(0));
         openMediaSource(mMediaSourceFactory.fromUrlList(urlList), "progressive");
     }
 
@@ -535,6 +538,9 @@ public class Media3PlayerController implements Player.Listener {
     }
 
     private void openMediaSource(@Nullable MediaSource mediaSource, String netPathType) {
+        // Every source goes through here, so anything but a voices-only download is separated.
+        boolean voicesOnly = mNextSourceVoicesOnly;
+        mNextSourceVoicesOnly = false;
         if (mPlayer == null) {
             // Nothing downstream reports this, so without a line here the open simply evaporates:
             // no prepare, no error, no NetPath milestone - just a player stuck at 00:00.
@@ -568,6 +574,7 @@ public class Media3PlayerController implements Player.Listener {
         mLastVideoLoadStartMs = -1;
         armRepoint(netPathType);
         PlayerInfrastructureWarmup.onPlaybackPreparing();
+        MusiclessAudioSink.voicesOnlySource = voicesOnly;
         mPlayer.setMediaSource(mediaSource);
         mPlayer.prepare();
         sendFirstFrameFence();

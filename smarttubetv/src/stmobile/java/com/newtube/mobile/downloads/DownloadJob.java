@@ -14,6 +14,8 @@ import com.liskovsoft.youtubeapi.service.YouTubeServiceManager;
 import com.liskovsoft.youtubeapi.videoinfo.V2.VideoInfoService;
 import com.liskovsoft.smartyoutubetv2.tv.R;
 import com.newtube.mobile.player.Media3SourceFactory;
+import com.newtube.mobile.player.MusiclessFile;
+import com.newtube.mobile.player.MusiclessPrefs;
 
 import java.io.File;
 import java.io.IOException;
@@ -55,6 +57,9 @@ final class DownloadJob {
 
         File videoPart = mItem.isAudioOnly() ? null : new File(DownloadRegistry.partsDir(mContext), mItem.id + ".video");
         File audioPart = mItem.audioItag != null ? new File(DownloadRegistry.partsDir(mContext), mItem.id + ".audio") : null;
+        // A progressive (single-file) rung has no audio part: its audio track is in the video part.
+        File audioSource = audioPart != null ? audioPart : videoPart;
+        File voicesPart = audioSource != null ? new File(DownloadRegistry.partsDir(mContext), mItem.id + ".voices") : null;
 
         try {
             fetchThumbnail();
@@ -62,7 +67,9 @@ final class DownloadJob {
             if (mItem.cancelRequested) {
                 throw new StreamFetcher.CancelledException();
             }
-            publish(videoPart, audioPart);
+            File audio = removeMusic(audioSource, voicesPart);
+            mItem.voicesOnly = audio != audioSource;
+            publish(videoPart, audio);
             mItem.state = DownloadItem.STATE_DONE;
             mItem.error = null;
             retirePreviousCopies();
@@ -71,6 +78,9 @@ final class DownloadJob {
             deleteParts(videoPart, audioPart);
             mRegistry.remove(mItem);
             return;
+        } catch (MusiclessFile.Failure e) {
+            Log.w(TAG, "music removal failed: " + e);
+            fail(mContext.getString(R.string.mobile_download_error_music));
         } catch (StreamFetcher.UrlRefusedException e) {
             Log.w(TAG, "download refused: " + e);
             fail(mContext.getString(R.string.mobile_download_error_link));
@@ -80,6 +90,11 @@ final class DownloadJob {
         } catch (RuntimeException e) {
             Log.e(TAG, "download crashed", e);
             fail(mContext.getString(R.string.mobile_download_error_generic));
+        } finally {
+            if (voicesPart != null) {
+                //noinspection ResultOfMethodCallIgnored
+                voicesPart.delete();
+            }
         }
 
         mRegistry.notifyChanged();
@@ -280,6 +295,37 @@ final class DownloadJob {
             }
         }
         return null;
+    }
+
+    /**
+     * With "Remove music" on, the saved file keeps only the voices, so it plays without music in
+     * the gallery and other apps too. The fetched part stays untouched for a retry.
+     */
+    @Nullable
+    private File removeMusic(@Nullable File audioPart, @Nullable File voicesPart) throws IOException {
+        if (audioPart == null || !MusiclessPrefs.isOn(mContext)) {
+            return audioPart;
+        }
+        mItem.state = DownloadItem.STATE_PROCESSING;
+        mRegistry.notifyChanged();
+        mListener.onProgress(mItem);
+        try {
+            MusiclessFile.removeMusic(mContext, audioPart, voicesPart, percent -> {
+                if (percent != mItem.musicPercent) {
+                    // At most ~100 changes, so no throttle: a skipped 0% would leave "Finishing…" up.
+                    mItem.musicPercent = percent;
+                    mRegistry.notifyChanged();
+                    mListener.onProgress(mItem);
+                }
+                return !mItem.cancelRequested;
+            });
+        } finally {
+            mItem.musicPercent = -1;
+        }
+        if (mItem.cancelRequested) {
+            throw new StreamFetcher.CancelledException();
+        }
+        return voicesPart;
     }
 
     // ---------------------------------------------------------------------------------

@@ -299,7 +299,9 @@
     <string name="mobile_download_state_downloading">جارٍ التنزيل · %1$d%% · %2$s من %3$s</string>
     <string name="mobile_download_state_downloading_bytes">جارٍ التنزيل · %1$s</string>
     <string name="mobile_download_state_processing">جارٍ الإنهاء…</string>
+    <string name="mobile_download_state_removing_music">جارٍ إزالة الموسيقى · %1$d%%</string>
     <string name="mobile_download_error_generic">فشل التنزيل. انقر لإعادة المحاولة.</string>
+    <string name="mobile_download_error_music">تعذّرت إزالة الموسيقى. انقر لإعادة المحاولة.</string>
     <string name="mobile_download_error_link">انتهت صلاحية رابط التنزيل. انقر لإعادة المحاولة.</string>
     <string name="mobile_download_done_title">اكتمل التنزيل</string>
     <string name="mobile_download_play">تشغيل</string>

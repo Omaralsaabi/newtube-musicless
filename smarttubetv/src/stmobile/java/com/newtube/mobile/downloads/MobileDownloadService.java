@@ -213,7 +213,7 @@ public final class MobileDownloadService extends Service {
         }
 
         builder.setContentTitle(item.title);
-        if (item.state == DownloadItem.STATE_PROCESSING) {
+        if (item.state == DownloadItem.STATE_PROCESSING && item.musicPercent < 0) {
             builder.setContentText(getString(R.string.mobile_download_state_processing))
                     .setProgress(0, 0, true);
         } else {

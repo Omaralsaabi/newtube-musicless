@@ -11,6 +11,8 @@ import java.nio.ByteBuffer;
 
 /** Runs the asynchronous processor outside DefaultAudioSink's synchronous processBuffers loop. */
 final class MusiclessAudioSink extends ForwardingAudioSink {
+    /** Set by the controller before each new source; read on the flush every new source causes. */
+    static volatile boolean voicesOnlySource;
     private final MusiclessAudioProcessor processor;
     private Format inputFormat, pendingFormat;
     private int bufferSize;
@@ -222,6 +224,7 @@ final class MusiclessAudioSink extends ForwardingAudioSink {
     }
 
     @Override public void flush() {
+        processor.passThrough = voicesOnlySource;
         clearHold(); holdReason = startUs == C.TIME_UNSET ? "start" : "seek";
         super.flush();
         processor.flush();

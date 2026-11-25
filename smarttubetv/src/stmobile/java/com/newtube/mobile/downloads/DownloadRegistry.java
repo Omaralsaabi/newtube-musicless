@@ -122,6 +122,16 @@ public final class DownloadRegistry {
         return null;
     }
 
+    /** Whether {@code uri} is a finished download whose music was already removed. */
+    public synchronized boolean isVoicesOnly(String uri) {
+        for (DownloadItem item : mItems) {
+            if (item.voicesOnly && item.isDone() && uri.equals(item.outputUri)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** The queued/running download of this video, if any - video file or audio track alike. */
     @Nullable
     public synchronized DownloadItem findActive(String videoId) {

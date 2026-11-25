@@ -23,7 +23,9 @@ final class DownloadProgressText {
                         done, DownloadOptions.formatBytes(item.bytesTotal));
             }
             case DownloadItem.STATE_PROCESSING:
-                return context.getString(R.string.mobile_download_state_processing);
+                return item.musicPercent >= 0
+                        ? context.getString(R.string.mobile_download_state_removing_music, item.musicPercent)
+                        : context.getString(R.string.mobile_download_state_processing);
             case DownloadItem.STATE_FAILED:
                 return item.error != null ? item.error : context.getString(R.string.mobile_download_error_generic);
             case DownloadItem.STATE_DONE:

@@ -47,6 +47,8 @@ public final class DownloadItem {
     @Nullable public volatile String fileName;
     @Nullable public volatile String thumbPath;
     public volatile long durationMs;
+    /** The file's audio is voices only (music removed while downloading). */
+    public volatile boolean voicesOnly;
     /** Short, user-facing failure reason (already localized) or null. */
     @Nullable public volatile String error;
 
@@ -56,6 +58,8 @@ public final class DownloadItem {
     public transient volatile long videoLength = -1;
     public transient volatile long audioLength = -1;
     public transient volatile boolean cancelRequested;
+    /** While removing music: percent done, or -1 (unknown, or another step). */
+    public transient volatile int musicPercent = -1;
 
     public DownloadItem(String id, String videoId, String title, @Nullable String author,
                         @Nullable String thumbUrl, int kind, @Nullable String qualityLabel,
@@ -133,6 +137,7 @@ public final class DownloadItem {
         json.putOpt("fileName", fileName);
         json.putOpt("thumbPath", thumbPath);
         json.put("durationMs", durationMs);
+        json.put("voicesOnly", voicesOnly);
         json.putOpt("error", error);
         return json;
     }
@@ -151,6 +156,7 @@ public final class DownloadItem {
         item.fileName = optString(json, "fileName");
         item.thumbPath = optString(json, "thumbPath");
         item.durationMs = json.optLong("durationMs", 0);
+        item.voicesOnly = json.optBoolean("voicesOnly", false);
         item.error = optString(json, "error");
         return item;
     }
