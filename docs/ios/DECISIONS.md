@@ -408,6 +408,29 @@ Personal Team test (Q8, D15) moves with them: there is still no paid-only capabi
   is small (256 KiB, init or index ranges), so it rarely matters; the fix would be a streaming task
   delegate that signals the response headers.
 
+### D42. The fMP4 demuxer, and YouTube's AAC carries no priming signal — US-011
+
+- `FMP4Demuxer` (MediaPipeline) parses the subset YouTube serves: ftyp + moov (`tkhd`, `edts/elst`,
+  `mdhd`, `hdlr`, `stsd` with avc1/avc3 + avcC and mp4a + esds, `mvex/trex`), the sidx (byte ranges
+  anchored after the box; `seek(to:)` maps a time to a reference), and moof (`tfhd` with every
+  default, `tfdt`, `trun` with every flag, v0/v1 composition offsets) + mdat. `FMP4Track` builds the
+  CoreMedia format descriptions (SPS/PPS; AAC with the ES_Descriptor as magic cookie) and one
+  `CMSampleBuffer` per sample (PTS/DTS/duration in the track timescale; `NotSync` and
+  `DependsOnOthers` on non-sync video samples).
+- **Fixtures** (368 KB, CC BY 3.0): Big Buck Bunny as YouTube serves it, init + index + two
+  segments of itag 140 (AAC-LC 44.1 kHz stereo, 64 references of 9.98 s) and itag 160 (H.264 144p,
+  123 references), recorded on the iPhone with `--record-media`; media bytes and ranges only.
+- Tests decode for real: the first H.264 sample through VideoToolbox (a 256-px frame) and 200 AAC
+  packets through AVAudioConverter (204,800 stereo frames, not silent).
+- **PRD §4.2 assumed the AAC priming is signalled by an edit list. YouTube's itag 140 has none:** its
+  init holds no `edts`, and its `udta` only names the encoder ("Google"); no iTunSMPB-style gapless
+  tag either. The video track does have an `elst`. Core Audio's AAC decoder trims nothing on its own
+  (200 packets → exactly 200 × 1024 frames), and Android's media3 sees an encoder delay of 0 for these
+  files, so it doesn't trim either. So `FMP4Track.priming` exposes `elst` when a file has one (local
+  files, downloads), and is 0 here. Whether YouTube's audio then runs late against its video gets
+  measured in US-013 with an A/V sync test video (limit 40 ms); a fixed trim is added only if the
+  measurement asks for it.
+
 ## Settled `[verify]` items
 
 | PRD item | Result | Evidence |

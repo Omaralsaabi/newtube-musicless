@@ -69,6 +69,7 @@ struct RootView: View {
             if arguments.contains("--resolve-check") { Task { await PlayerCheckRunner.runUS009(record: false) } }
             if arguments.contains("--record-answers") { Task { await PlayerCheckRunner.runUS009(record: true) } }
             if arguments.contains("--fetch-check") { Task { await FetchCheckRunner.run() } }
+            if arguments.contains("--record-media") { Task { await MediaRecorder.run() } }
             AppLog.musicless.info("Model status \(models.status.logValue)")
             // `--download-models` starts the voice-model download at launch (no auto-start yet: D25).
             if ProcessInfo.processInfo.arguments.contains("--download-models") { models.start() }

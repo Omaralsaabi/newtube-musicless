@@ -10,6 +10,11 @@ let package = Package(
     ],
     targets: [
         .target(name: "MediaPipeline"),
-        .testTarget(name: "MediaPipelineTests", dependencies: ["MediaPipeline"]),
+        .testTarget(
+            name: "MediaPipelineTests",
+            dependencies: ["MediaPipeline"],
+            // Fixtures/media: Big Buck Bunny byte ranges (CC BY 3.0), see Fixtures/media/LICENSE.md.
+            resources: [.copy("Fixtures")]
+        ),
     ]
 )
