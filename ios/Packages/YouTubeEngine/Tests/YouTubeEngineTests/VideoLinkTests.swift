@@ -44,3 +44,27 @@ import Testing
         #expect(VideoLink.parse("https://www.youtube.com/watch?v=dQw4w9WgXcQ")?.startSeconds == nil)
     }
 }
+
+/// US-015: WEB_EMBED's identity from its embed page's first `ytcfg.set({…});`.
+@Suite struct EmbedIdentityTests {
+    @Test func theFlagsAndThePagesOwnVisitorComeTogether() throws {
+        let html = """
+        <script>window.x=1;ytcfg.set({"VISITOR_DATA":"CgtFbWJlZFZpc2l0b3I%3D","WEB_PLAYER_CONTEXT_CONFIGS":\
+        {"WEB_PLAYER_CONTEXT_CONFIG_ID_EMBEDDED_PLAYER":{"encryptedHostFlags":"flags-abc","x":{"y":1}}}});\
+        ytcfg.set({"OTHER":true});</script>
+        """
+        let identity = try #require(EmbedIdentityStore.parse(html))
+        #expect(identity.encryptedHostFlags == "flags-abc")
+        #expect(identity.visitorData == "CgtFbWJlZFZpc2l0b3I%3D")
+        let context = #"ytcfg.set({"INNERTUBE_CONTEXT":{"client":{"visitorData":"inner"}},"WEB_PLAYER_CONTEXT_CONFIGS":{"WEB_PLAYER_CONTEXT_CONFIG_ID_EMBEDDED_PLAYER":{"encryptedHostFlags":"f"}}});"#
+        #expect(EmbedIdentityStore.parse(context)?.visitorData == "inner")
+        #expect(EmbedIdentityStore.parse(#"ytcfg.set({"VISITOR_DATA":"v"});"#) == nil, "both or neither")
+    }
+
+    @Test func thePageRequestIsTheEmbedPageWithSafariAndARedditReferer() {
+        let request = EmbedIdentityStore.pageRequest(videoID: "dQw4w9WgXcQ")
+        #expect(request.url?.absoluteString == "https://www.youtube.com/embed/dQw4w9WgXcQ?html5=1")
+        #expect(request.value(forHTTPHeaderField: "Referer") == "https://www.reddit.com/")
+        #expect(request.value(forHTTPHeaderField: "User-Agent")?.contains("Safari") == true)
+    }
+}

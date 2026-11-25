@@ -68,6 +68,7 @@ struct RootView: View {
         }
         .onAppear {
             if watch == nil { watch = WatchDebug(models: models) }
+            PlaybackServices.shared.warmUp()
             AppLog.probe.info("launch version=\(BuildInfo.version) build=\(BuildInfo.build) commit=\(BuildInfo.commit)")
             // `--run-probe` opens the probe at launch, so it can be captured without touching the phone:
             // xcrun devicectl device process launch --device "$DEVICE_ID" --console <bundle id> --run-probe
@@ -92,6 +93,8 @@ struct RootView: View {
                     .flatMap { arguments.indices.contains($0 + 1) ? Double(arguments[$0 + 1]) : nil } ?? 40
                 Task { await SyncCheck.run(videoID: next.hasPrefix("--") || next.isEmpty ? nil : next, seconds: seconds) }
             }
+            // `--solver-check`: the challenge solver's cold and warm speed on this phone (US-016).
+            if arguments.contains("--solver-check") { Task { await SolverCheck.run() } }
             // `--delay-check [<id> …]`: AAC vs Opus delay by cross-correlation (US-013); presets by default.
             if let index = arguments.firstIndex(of: "--delay-check") {
                 let ids = arguments[(index + 1)...].prefix { !$0.hasPrefix("--") }

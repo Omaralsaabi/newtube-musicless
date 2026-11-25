@@ -11,6 +11,13 @@ public struct PlayerAnswer: Sendable {
         public var playableInEmbed: Bool?
         /// YouTube's structured age-gate marker (0 when absent).
         public var desktopLegacyAgeGateReason: Int
+
+        /// Reason and subreason joined with " • ", the text Android's walk classifies
+        /// (`VideoInfo.getPlayabilityStatus`, `ServiceHelper.createInfo`).
+        public var text: String? {
+            let parts = [reason, subreason].compactMap { $0 }.filter { !$0.isEmpty }
+            return parts.isEmpty ? nil : parts.joined(separator: " \u{2022} ")
+        }
     }
 
     public struct Thumbnail: Sendable, Equatable {

@@ -88,6 +88,10 @@ xcrun devicectl device process launch --device "$DEVICE_ID" --terminate-existing
   Files app; bring the app back with `devicectl device process launch` *without*
   `--terminate-existing`), `--sync-check [<id>]` (beeps vs marker frames, AAC vs Opus) and
   `--delay-check [<id> …]` (AAC vs Opus delay by cross-correlation).
+- `--solver-check` (US-016): the challenge solver's cold, preprocessed and memo times on the phone.
+- `/player` goes through `SourceWalker` (US-015, the signed-out lane of Android's walk) and ciphered
+  winners through `CipherResolver` (US-016). `WalkReplayTests` replays Android's device walks;
+  `ios/tools/solver_oracle.sh` refreshes the solver fixture (needs node) when YouTube ships a new player.
 - YouTube's AAC runs 38.9 ms late, undeclared; the engine compensates (`YouTubeAudio.aacDelay`,
   DECISIONS D44). Re-measure with `--delay-check` before changing it.
 - The phone must be unlocked for `devicectl … launch` ("Locked" error otherwise). Killing a

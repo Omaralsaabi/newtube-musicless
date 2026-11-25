@@ -29,7 +29,7 @@ public enum AnswerKind: Sendable, Equatable {
 
     public init(_ answer: PlayerAnswer) {
         let status = answer.playability.status
-        let reason = answer.playability.reason
+        let reason = answer.playability.text
         switch status {
         case "OK":
             if answer.isLive && answer.dashManifestURL == nil && !answer.hasAdaptiveDelivery {

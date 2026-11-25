@@ -638,6 +638,100 @@ Personal Team test (Q8, D15) moves with them: there is still no paid-only capabi
   `simctl io recordVideo` fails without a Simulator window (SimRenderServer error 2). Screenshots
   are in the gitignored `ios/build/demo/`.
 
+### D46. The source walk, signed out — US-015
+
+- **The order:** `SourcePlanner` ports MediaServiceCore's `PhoneSourcePlanner` whole, including the
+  recovery, wall and live-card shapes US-017 will feed. Two differences:
+  - It leaves out MWEB, WEB and WEB_SAFARI, which need PO tokens (PRD §4.4).
+  - The tail keeps Android's order, IOS before ANDROID_REEL. The PRD's US-015 line wrote ANDROID_REEL
+    → IOS; Android is the reference, and neither has been measured to serve what the first four
+    refuse.
+  - Android's `PhoneSourcePlannerTest` is ported with its expected strings verbatim, the three web
+    clients dropped by a helper.
+- **The walk:** `SourceWalker` ports `VideoInfoService.firstPlayable` for the signed-out lane:
+  - TV_TIZEN is admitted after an anonymous non-web content refusal, once, on a 7 s budget;
+  - the age-gate stop;
+  - terminal consensus;
+  - `BotCheckWalkState` (hold, walk on, discard on a serve, a lone challenge amid refusals);
+  - a repeated sign-in request is confirmed only by a second video within 10 min, and only when the
+    walk's sign-in requests agree;
+  - the circuit: 15 min, one probe a minute, earned only by a walk that reached the end, cleared by
+    a network change;
+  - the anonymous-challenge memory (15 min, web sources last);
+  - the live hold (only ANDROID_VR after a live answer without DASH);
+  - 45 s per walk, 1.5 s minimum per attempt, transport-down after 2 silent attempts.
+- **Identities, iOS has two:** every source rides the youtube.com/tv visitor except WEB_EMBED, which
+  rides its embed page's (PRD §4.4, D37). Android's VISIONOS and ANDROID_VR ride a third, the web
+  session's. Consensus therefore settles on the same allowlisted terminal key from 3 sources over
+  both identities (removed or members only: at request 3, Android at 4).
+  - A walk with no WEB_EMBED agreement can't settle: for a removed video WEB_EMBED answered a generic
+    ERROR, which is neutral, so all 5 sources were asked. Android's 3-identity rule exhausts there
+    too.
+- **The classified text:** answers are classified on reason and subreason joined with " • ", the text
+  Android's walk reads (`VideoInfo.getPlayabilityStatus`). US-009's `AnswerKind` read the reason only.
+- **Replay** (`WalkReplayTests`): Android's device fixture (`device_walks.json`, MediaServiceCore
+  `902e4d17`, copied with its provenance) runs through the iOS walk.
+  - Covered: 12 signed-out cases (kids, adult embeddable and not, live, removed, private + ordinary +
+    members in one process, paid, music only, and the first walks of three recovery cases), 15 walks.
+  - Each must ask the device's sources (minus the web three), in order, and settle the same way.
+  - Two walks are named as changed by the 2-identity consensus.
+  - Disabling the TV_TIZEN admission fails 5 cases, so the replay has teeth.
+  - Media failures (US-017) and signed-in cases (US-022) aren't replayed yet.
+- **Requests** (`PlayerSources`):
+  - each source's QueryBuilder body, a total per-attempt timeout (no answer → no response);
+  - ANDROID_REEL to `youtubei.googleapis.com/…/reel/reel_item_watch`, its `playerResponse` unwrapped;
+  - WEB_EMBED's identity from `youtube.com/embed/<id>?html5=1` (Safari UA, reddit Referer):
+    `encryptedHostFlags` with that page's own visitor, the two bound, cached 6 h, invalidated on a
+    152 refusal.
+- **iPhone (home Wi-Fi, 2026-11-25):**
+  - "Baby Shark Dance" (`XqZsoesa55w`, made for kids) played through anonymous TV_TIZEN at request
+    2. VISIONOS answered "This video is not available"; the walk took 350–381 ms.
+  - The issue #5 video in the fixture (`_WB5hh7WOb4`) is now "removed by the uploader": every source
+    agreed except WEB_EMBED's generic error.
+- **Not ported yet:**
+  - `BotWallBook` (the network wall's plan) and the recovery state (suspects, recent refusals,
+    walls): US-017;
+  - `KidsChannelMemory` and the live card: they need the app to name a video's channel or live
+    state (Phase 4);
+  - live playback: a live answer is reported as "live streams don't play yet".
+  - TV_TIZEN answers carry no title in `videoDetails` (the screen shows the id); the watch page gets
+    titles from `/next` (US-020).
+
+### D47. The challenge solver: JavaScriptCore, with a warm-up — US-016
+
+- **The bundle:** MediaServiceCore's solver bundle (yt-dlp's EJS `yt.solver.core.js`, meriyah 6.1.4,
+  astring 1.9.0, its `polyfill.js`; `8e92399b`, licences in `JS/nsigsolver/README.md`) runs
+  unchanged in a `JSContext`.
+  - The context lives on one serial queue (`ChallengeSolver`, an actor on a `DispatchSerialQueue`).
+  - The input is `jsc({type: "player"|"preprocessed", …})`, as Android's `JsRuntimeChalBaseJCP`
+    sends it.
+  - The preprocessed player is kept on disk per player id (Caches), the raw player JS too
+    (`PlayerScripts`), and solved values in memory.
+  - MediaServiceCore's `newtube.memo.js` isn't used.
+  - The resource folder is `JS`: a package folder named `Resources` fails the app's code signing
+    ("bundle format unrecognized").
+- **What gets solved:** every `n` in the answer's URLs and every `s` in its `signatureCipher`, in one
+  bulk call, with the TV player whose `signatureTimestamp` the requests sent. The signature goes in
+  as `<sp>=` (default `sig`); the other parameters keep their encoding byte for byte. An answer with
+  nothing to solve (VISIONOS, ANDROID_VR) isn't touched (Android's `setSkipSolveWithoutChallenges`).
+- **Correctness:** JavaScriptCore gives exactly V8's answers. `ios/tools/solver_oracle.sh` downloads
+  the current TV player (`b485e332`) and records Node's (V8's) answers to 6 `n` and 4 `sig`
+  challenges; `ChallengeSolverTests` gets the same answers on the Mac, and the iPhone's
+  `--solver-check` gives the same sample. googlevideo served the deciphered TV_TIZEN URLs (206).
+- **Speed on the A15** (`--solver-check`, 3 rounds):
+  - a cold solve (fresh context, the raw 2.3 MB player): **1,661–1,790 ms**;
+  - from the preprocessed player: **74–84 ms**;
+  - from the memo: 0 ms.
+  - Mac: 1.2 s cold, 60 ms preprocessed; V8 280 ms cold.
+- **Deviation from PRD §4.4** ("above 1.5 s, move it into a hidden WKWebView"):
+  - The cold solve is over 1.5 s, but it happens once per player version (YouTube ships one about
+    weekly), and its result persists. Every video after that costs 75–86 ms.
+  - So the cold cost moves off the critical path instead: `PlaybackServices.warmUp()` preprocesses
+    the current player in the background at launch.
+  - A WebView would add an out-of-process round trip per solve and is suspended in the background.
+  - Measured: first ciphered video cold, 1.76 s of solve and 2.9 s tap to voices. After the
+    warm-up, 86 ms and **1.13 s**.
+
 ## Settled `[verify]` items
 
 | PRD item | Result | Evidence |
@@ -655,4 +749,6 @@ Personal Team test (Q8, D15) moves with them: there is still no paid-only capabi
 | §4.5: whether the Neural Engine keeps serving a locked-screen app | **Still open.** The `CPUAndNeuralEngine` sessions run locked at foreground speed, but probably on the CPU (thread CPU = wall time), so this says nothing about the Neural Engine. Irrelevant while ORT CPU is the backend | `BENCHMARKS.md` |
 | §4.2: a display layer fed in the background fails "with an interruption error" | **True, even unfed:** the video renderer turns `requiresFlushToResumeDecoding`, status failed, AVFoundation -11847 (`AVErrorOperationInterrupted`); a flush on return resets it (D44) | `--background-test` on the iPhone |
 | §4.2: AAC priming is signalled by an edit list, to be trimmed | **False** (D42); YouTube's AAC runs 38.9 ms later than its Opus, undeclared; the engine trims a fixed 38.9 ms (D44) | `--sync-check`, `--delay-check` |
+| §4.4: the JS solver's speed in JavaScriptCore on the A15 | Cold 1.66–1.79 s (over 1.5 s), preprocessed 74–84 ms; kept in JavaScriptCore with a launch warm-up instead of a WKWebView (D47) | `--solver-check` |
+| US-015: Android's walk replay tests' names | `VideoInfoReplayTest` (fixture `walk_replay/device_walks.json`), `PhoneSourcePlannerTest`, `BotCheckWalkStateTest` in MediaServiceCore's `videoinfo/V2` tests | `find` |
 | §4.3: Spleeter's U-Net is Neural-Engine-friendly | Not established, for the same reason; would need a static-shape Core ML model (US-007's route) | — |

@@ -9,7 +9,12 @@ let package = Package(
         .library(name: "YouTubeEngine", targets: ["YouTubeEngine"]),
     ],
     targets: [
-        .target(name: "YouTubeEngine"),
+        .target(
+            name: "YouTubeEngine",
+            // JS/nsigsolver: yt-dlp's EJS challenge solver and its parser libraries (US-016).
+            resources: [.copy("JS")],
+            linkerSettings: [.linkedFramework("JavaScriptCore")]
+        ),
         .testTarget(
             name: "YouTubeEngineTests",
             dependencies: ["YouTubeEngine"],

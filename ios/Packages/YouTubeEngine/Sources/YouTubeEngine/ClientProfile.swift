@@ -38,6 +38,18 @@ public struct ClientProfile: Sendable, Hashable {
         return nil
     }
 
+    /// Android's `AppClient.isWebPotRequired` (WEB, MWEB, WEB_EMBED, WEB_SAFARI, …): of the sources
+    /// iOS asks, only WEB_EMBED. The walk reads it: such a source's refusal doesn't admit TV_TIZEN,
+    /// it isn't an unchallenged fallback after a bot check, and it goes last when the anonymous web
+    /// identity is challenged.
+    public var isWebPotRequired: Bool { id == "WEB_EMBED" }
+
+    /// Which visitor a request rides (Android's `PlayerSource.Identity`). On iOS every source uses the
+    /// youtube.com/tv visitor except WEB_EMBED, which rides its embed page's (PRD §4.4, D37), so
+    /// terminal consensus has two identities to count where Android has three (D46).
+    public enum Identity: String, Sendable { case appVisitor, embedPage }
+    public var identity: Identity { isEmbedded ? .embedPage : .appVisitor }
+
     public static func == (lhs: ClientProfile, rhs: ClientProfile) -> Bool { lhs.id == rhs.id }
     public func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }

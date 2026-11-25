@@ -15,18 +15,49 @@ final class PlaybackServices {
     private(set) var runtime: ModelRuntime?
     let transport = InnerTubeTransport(log: { AppLog.netPath.info($0) })
     let identity: VisitorIdentity
+    /// The source walk (US-015) and what it asks with.
+    let walker: SourceWalker
+    let sources: PlayerSources
+    /// The signature and n solver (US-016) and the player JS it solves with.
+    let solver: ChallengeSolver
+    let cipher: CipherResolver
     private var memoryObserver: (any NSObjectProtocol)?
 
     private init() {
-        identity = VisitorIdentity(transport: transport,
-                                   storeURL: URL.applicationSupportDirectory.appending(path: "youtube/visitor.json"),
-                                   log: { AppLog.netPath.info($0) })
+        let log: @Sendable (String) -> Void = { AppLog.netPath.info($0) }
+        let youtube = URL.applicationSupportDirectory.appending(path: "youtube", directoryHint: .isDirectory)
+        identity = VisitorIdentity(transport: transport, storeURL: youtube.appending(path: "visitor.json"), log: log)
+        walker = SourceWalker(network: { await NetworkWatcher.shared.signature() }, log: log)
+        sources = PlayerSources(transport: transport, visitor: identity,
+                                embed: EmbedIdentityStore(transport: transport, storeURL: youtube.appending(path: "embed.json"), log: log),
+                                log: log)
+        let players = URL.cachesDirectory.appending(path: "youtube/players", directoryHint: .isDirectory)
+        solver = ChallengeSolver(cacheDirectory: players, log: { AppLog.netPath.info($0) })
+        cipher = CipherResolver(solver: solver, scripts: PlayerScripts(transport: transport, directory: players))
         memoryObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main
         ) { _ in
             MainActor.assumeIsolated {
                 AppLog.musicless.info("Memory warning")
-                if let runtime = PlaybackServices.shared.runtime { Task { await runtime.didReceiveMemoryWarning() } }
+                let services = PlaybackServices.shared
+                if let runtime = services.runtime { Task { await runtime.didReceiveMemoryWarning() } }
+                Task { await services.solver.release() }
+            }
+        }
+    }
+
+    /// At launch, in the background: the visitor, then the current player preprocessed for the
+    /// solver, so neither lands on the first tap (US-016).
+    func warmUp() {
+        let identity = identity, cipher = cipher
+        Task(priority: .utility) {
+            let start = ContinuousClock.now
+            guard let playerURL = try? await identity.current().playerURL else { return }
+            do {
+                try await cipher.warm(playerURL: playerURL)
+                AppLog.netPath.info("solver warm-up done ms=\(Int((ContinuousClock.now - start) / .milliseconds(1)))")
+            } catch {
+                AppLog.netPath.info("solver warm-up failed error=\(error)")
             }
         }
     }
@@ -104,6 +135,8 @@ struct ResolvedMedia: Sendable {
     var vp9: MediaFile?
     /// Seconds the AAC runs late without declaring it (`YouTubeAudio.delay`), for the engine.
     var audioDelay: Double
+    /// The source that served it (the walk's winner).
+    var client: String
     var playerMs: Int
 }
 
@@ -154,22 +187,30 @@ struct ResolveError: Error, CustomStringConvertible {
 }
 
 enum VideoResolver {
+    /// Walks the sources (US-015), opens a ciphered winner (US-016), and picks the pair to play.
     @MainActor
     static func media(for videoID: String, withVideo: Bool) async throws -> ResolvedMedia {
         let services = PlaybackServices.shared
-        let transport = services.transport, identity = services.identity
+        let sources = services.sources
         let start = ContinuousClock.now
-        let visitor = try await identity.current()
-        let locale = RequestLocale.current
-        let body = PlayerRequestBody(client: .visionOS, videoID: videoID, cpn: PlayerRequestBody.makeCPN(),
-                                     visitorData: visitor.visitorData, signatureTimestamp: await identity.signatureTimestamp(),
-                                     acceptLanguage: locale.language, acceptRegion: locale.region,
-                                     utcOffsetMinutes: locale.utcOffsetMinutes)
-        let response = try await transport.send(InnerTubeTransport.playerRequest(body), label: "VISIONOS")
-        let answer = try PlayerAnswer(json: response.data)
-        guard answer.kind == .served else {
-            throw ResolveError(description: "VISIONOS: \(answer.kind.logValue) \(answer.playability.reason ?? "")")
+        let walk = await services.walker.walk(videoID: videoID, context: SourcePlanner.Context(lane: .signedOut)) { client, budget in
+            await sources.attempt(client, videoID: videoID, budget: budget)
         }
+        let walkMs = Int((ContinuousClock.now - start) / .milliseconds(1))
+        AppLog.netPath.info("player-walk video=\(videoID) asked=\(walk.asked.map(\.id)) winner=\(walk.client?.id ?? "none") "
+                            + "playable=\(walk.playable ? "y" : "n") ms=\(walkMs)" + (walk.fromCircuit ? " circuit=y" : ""))
+        guard var answer = walk.answer else {
+            throw ResolveError(description: "couldn't reach YouTube (\(walk.markers.last ?? "no answer"))")
+        }
+        guard walk.playable else {
+            let reason = answer.playability.text ?? answer.playability.status
+            throw ResolveError(description: "\(walk.client?.id ?? "?"): \(answer.kind.logValue) \(reason)")
+        }
+        guard !answer.isLive else { throw ResolveError(description: "live streams don't play yet") }
+        let solveStart = ContinuousClock.now
+        answer = try await services.cipher.resolve(answer, playerURL: try await services.identity.current().playerURL)
+        let solveMs = Int((ContinuousClock.now - solveStart) / .milliseconds(1))
+        if solveMs > 1 { AppLog.netPath.info("player-sig video=\(videoID) client=\(walk.client?.id ?? "?") ms=\(solveMs)") }
         let selection = FormatSelector.select(answer)
         guard let audioFormat = selection.audio, let audio = source(audioFormat) else {
             throw ResolveError(description: "no AAC file with ranges in the answer")
@@ -200,6 +241,7 @@ enum VideoResolver {
                              audio: audio, audioMime: audioFormat.mimeType, video: video, videoLabel: label,
                              videoOptions: options, opus: opus, vp9: vp9,
                              audioDelay: YouTubeAudio.delay(codecs: audioFormat.codecs, sampleRate: audioFormat.audioSampleRate),
+                             client: walk.client?.id ?? "?",
                              playerMs: Int((ContinuousClock.now - start) / .milliseconds(1)))
     }
 
