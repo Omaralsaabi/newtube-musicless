@@ -349,6 +349,35 @@ Personal Team test (Q8, D15) moves with them: there is still no paid-only capabi
   10 s, which would break G2's 2.5 s start): measure the value in US-010. This differs from Android
   on purpose; a 403 is still handled by re-resolving, never by changing hosts (PRD §0.4).
 
+### D40. Answers: parsing, kinds and the pair to play — US-009
+
+- `PlayerAnswer` decodes what Android's `VideoInfo` reads for playback (playability with reason,
+  subreason and the age marker; video details; adaptive formats with ranges, length, `lastModified`,
+  URL or cipher; the HLS, DASH and SABR URLs). Numbers may arrive as strings; both decode.
+- `AnswerKind` is the per-answer verdict of LANES §2.2, ported from `VideoInfo`'s predicates and
+  `BotCheckDetector` (the explicit bot words; the terminal allowlist in six locales, members-only
+  openings, violation removals with their qualifier, "learn more" and region guards; Java's NFD
+  normalisation as Foundation's decomposition minus non-base characters). Two additions: `noDelivery`
+  for OK without fetchable formats (SABR-only), and `unavailable(status)` for ERROR and the other
+  statuses no rule names. The lane-dependent rules (admitting anonymous TV_TIZEN, the age-gate stop,
+  consensus) stay with the planner (US-015).
+- `FormatSelector`: the best `video/mp4` avc1 at ≤ 60 fps whose **short side** is within the cap
+  (a vertical 1080x1920 video is 1080p, as Android's quality fix in HANDOFF §38), preferring size,
+  then frame rate, then bitrate; audio is the highest-bitrate `mp4a.40.2` at 44.1 kHz, else any mp4a.
+- **Fixtures** were recorded on the iPhone (`--record-answers`) and scrubbed by `AnswerScrubber`: only
+  `playabilityStatus`, `videoDetails` and `streamingData` are kept (visitor ids live in the dropped
+  `responseContext`); the requester's IP, which googlevideo embeds in every URL (`ip=`, and
+  `/ip/…/` in manifest paths), is replaced everywhere; the cache node names (`rrN---sn-…` hosts and
+  the `mn=` list, which point at the requester's ISP) become `sn-scrubbed-<n>`, keeping the structure
+  US-010's host fallback needs; and the country (`gcr=`) and opaque per-request tokens (`ei`, `bui`,
+  `spc`, `xpc`, `svpuc`, signatures, throughput, timing) become `scrubbed`, in query and manifest-path
+  form. A test re-checks every committed fixture. `fvip=` is a replica index, not an address. (The
+  node names and the country slipped into the first local commit; it was amended before any push.) Videos age: the first made-for-kids and live candidates had become
+  "removed by the uploader" and "live recording not available", so the recorder tries candidates
+  per kind, and those two answers became extra terminal fixtures (7 in all, 142 KB).
+- **On the iPhone:** 10 of 10 ordinary videos resolved with one VISIONOS request each (119–495 ms),
+  picking 1080p avc1 where offered (60 fps for the 60 fps video) and itag 140 (AAC-LC 44.1 kHz).
+
 ## Settled `[verify]` items
 
 | PRD item | Result | Evidence |

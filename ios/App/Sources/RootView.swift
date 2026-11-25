@@ -66,6 +66,8 @@ struct RootView: View {
             }
             // `--player-check` asks VISIONOS for five ordinary videos with the real and a -1 timestamp (US-008).
             if arguments.contains("--player-check") { Task { await PlayerCheckRunner.run() } }
+            if arguments.contains("--resolve-check") { Task { await PlayerCheckRunner.runUS009(record: false) } }
+            if arguments.contains("--record-answers") { Task { await PlayerCheckRunner.runUS009(record: true) } }
             AppLog.musicless.info("Model status \(models.status.logValue)")
             // `--download-models` starts the voice-model download at launch (no auto-start yet: D25).
             if ProcessInfo.processInfo.arguments.contains("--download-models") { models.start() }

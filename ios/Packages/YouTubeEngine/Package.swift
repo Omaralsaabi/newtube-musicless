@@ -10,6 +10,12 @@ let package = Package(
     ],
     targets: [
         .target(name: "YouTubeEngine"),
-        .testTarget(name: "YouTubeEngineTests", dependencies: ["YouTubeEngine"]),
+        .testTarget(
+            name: "YouTubeEngineTests",
+            dependencies: ["YouTubeEngine"],
+            // Fixtures/answers: /player answers recorded on the iPhone by `--record-answers`,
+            // scrubbed by AnswerScrubber (no visitor ids, the requester's IP replaced).
+            resources: [.copy("Fixtures")]
+        ),
     ]
 )

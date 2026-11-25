@@ -174,3 +174,92 @@ public enum PlayerCheck {
         }
     }
 }
+
+// MARK: - US-009 device runs
+
+extension PlayerCheck {
+    /// Ten ordinary videos for "each resolves with one request".
+    public static let resolveVideos = ["dQw4w9WgXcQ", "jNQXAC9IVRw", "M7lc1UVf-VE", "aqz-KE-bpKQ", "kJQP7kiw5Fk",
+                                       "9bZkp7q19f0", "RgKAFK5djSk", "JGwWNGJdvx8", "fJ9rUzIMcZQ", "hT_nvWreIhg"]
+
+    /// The fixtures' answers: a label, a client, candidate videos (videos age: the first candidate
+    /// whose answer passes `accept` is kept), and what the answer must be.
+    public struct Fixture: Sendable {
+        public let label: String
+        public let client: ClientProfile
+        public let candidates: [String]
+        public let accept: @Sendable (PlayerAnswer) -> Bool
+    }
+
+    public static let fixtureAnswers: [Fixture] = [
+        Fixture(label: "ordinary", client: .visionOS, candidates: ["dQw4w9WgXcQ"]) { $0.kind == .served },
+        Fixture(label: "kids-refused", client: .visionOS,
+                candidates: ["XqZsoesa55w", "e_04ZrNroTo", "020g-0hhCAU"]) { $0.kind == .contentRefused },
+        Fixture(label: "age-gate", client: .visionOS, candidates: ["qkO6iBwcoe4"]) { $0.kind == .ageGate },
+        Fixture(label: "sabr-only", client: .iOS, candidates: ["dQw4w9WgXcQ", "jNQXAC9IVRw"]) { $0.isSABROnly },
+        Fixture(label: "live", client: .visionOS,
+                candidates: ["gCNeDWCI0vo", "9Auq9mYxFEE", "21X5lGlDOfg", "jfKfPfyJRdk"]) { $0.isLive },
+        Fixture(label: "terminal-removed", client: .visionOS, candidates: ["_WB5hh7WOb4"]) { $0.kind == .terminal("removed-by-uploader") },
+        Fixture(label: "terminal-live-gone", client: .visionOS, candidates: ["jfKfPfyJRdk"]) { $0.kind == .terminal("live-recording-gone") },
+    ]
+
+    static func request(_ client: ClientProfile, _ videoID: String, visitor: VisitorState, timestamp: Int,
+                        locale: RequestLocale) -> URLRequest {
+        InnerTubeTransport.playerRequest(PlayerRequestBody(
+            client: client, videoID: videoID, cpn: PlayerRequestBody.makeCPN(), visitorData: visitor.visitorData,
+            signatureTimestamp: timestamp, acceptLanguage: locale.language, acceptRegion: locale.region,
+            utcOffsetMinutes: locale.utcOffsetMinutes))
+    }
+
+    /// One request per video; logs the verdict and the chosen avc1 + mp4a pair.
+    public static func resolve(videoIDs: [String] = resolveVideos, maxShortSide: Int = FormatSelector.maxAVCShortSide,
+                               transport: InnerTubeTransport, identity: VisitorIdentity,
+                               locale: RequestLocale = .current, log: @Sendable (String) -> Void) async {
+        guard let visitor = try? await identity.current() else { return log("resolve visitor failed") }
+        let timestamp = await identity.signatureTimestamp()
+        var resolved = 0
+        for videoID in videoIDs {
+            do {
+                let answer = try await transport.send(request(.visionOS, videoID, visitor: visitor, timestamp: timestamp,
+                                                              locale: locale), label: "VISIONOS")
+                let parsed = try PlayerAnswer(json: answer.data)
+                let pick = FormatSelector.select(parsed, maxShortSide: maxShortSide)
+                let video = pick.video.map { "\($0.itag)/\($0.width ?? 0)x\($0.height ?? 0)@\($0.fps ?? 0)/\($0.codecs)" } ?? "none"
+                let audio = pick.audio.map { "\($0.itag)/\($0.audioSampleRate ?? 0)Hz/\($0.codecs)" } ?? "none"
+                if parsed.kind == .served, pick.video != nil, pick.audio != nil { resolved += 1 }
+                log("resolve video=\(videoID) kind=\(parsed.kind.logValue) requests=1 ms=\(answer.milliseconds) "
+                    + "pick=\(video)+\(audio) title=\"\(parsed.details?.title?.prefix(40) ?? "")\"")
+            } catch {
+                log("resolve video=\(videoID) error=\"\(error)\"")
+            }
+        }
+        log("resolve done resolved=\(resolved)/\(videoIDs.count) with one request each")
+    }
+
+    /// Writes each fixture answer, scrubbed, to `directory/<label>.json`.
+    public static func record(into directory: URL, transport: InnerTubeTransport, identity: VisitorIdentity,
+                              locale: RequestLocale = .current, log: @Sendable (String) -> Void) async {
+        guard let visitor = try? await identity.current() else { return log("record visitor failed") }
+        let timestamp = await identity.signatureTimestamp()
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        for fixture in fixtureAnswers {
+            var kept = false
+            for videoID in fixture.candidates where !kept {
+                do {
+                    let answer = try await transport.send(request(fixture.client, videoID, visitor: visitor,
+                                                                  timestamp: timestamp, locale: locale), label: fixture.client.id)
+                    let scrubbed = try AnswerScrubber.scrub(answer.data)
+                    let parsed = try PlayerAnswer(json: scrubbed)
+                    kept = fixture.accept(parsed)
+                    if kept { try scrubbed.write(to: directory.appendingPathComponent("\(fixture.label).json")) }
+                    log("record label=\(fixture.label) client=\(fixture.client.id) video=\(videoID) "
+                        + "status=\(parsed.playability.status) kind=\(parsed.kind.logValue) live=\(parsed.isLive) "
+                        + "formats=\(parsed.adaptiveFormats.count) bytes=\(scrubbed.count) kept=\(kept)")
+                } catch {
+                    log("record label=\(fixture.label) video=\(videoID) error=\"\(error)\"")
+                }
+            }
+        }
+        log("record done")
+    }
+}
