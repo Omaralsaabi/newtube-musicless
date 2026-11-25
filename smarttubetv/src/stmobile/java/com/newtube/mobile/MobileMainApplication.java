@@ -181,6 +181,11 @@ public class MobileMainApplication extends MainApplication {
             com.liskovsoft.smartyoutubetv2.common.app.presenters.service.SidebarService sidebar =
                     com.liskovsoft.smartyoutubetv2.common.app.presenters.service.SidebarService.instance(this);
             sidebar.enableSection(com.liskovsoft.mediaserviceinterfaces.data.MediaGroup.TYPE_HOME, false);
+            // The Explore feeds are unfiltered YouTube too (Shorts are always off on the phone).
+            for (int sectionId : new int[] {com.liskovsoft.mediaserviceinterfaces.data.MediaGroup.TYPE_TRENDING, com.liskovsoft.mediaserviceinterfaces.data.MediaGroup.TYPE_MUSIC, com.liskovsoft.mediaserviceinterfaces.data.MediaGroup.TYPE_LIVE,
+                    com.liskovsoft.mediaserviceinterfaces.data.MediaGroup.TYPE_SPORTS, com.liskovsoft.mediaserviceinterfaces.data.MediaGroup.TYPE_GAMING, com.liskovsoft.mediaserviceinterfaces.data.MediaGroup.TYPE_NEWS, com.liskovsoft.mediaserviceinterfaces.data.MediaGroup.TYPE_KIDS_HOME}) {
+                sidebar.enableSection(sectionId, false);
+            }
             sidebar.setBootSectionId(com.liskovsoft.mediaserviceinterfaces.data.MediaGroup.TYPE_SUBSCRIPTIONS);
         }
         // Schedules legacy bundled-model cache cleanup once, even when separation is off.

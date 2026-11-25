@@ -274,7 +274,9 @@ android {
         // Reuse the generated offline media fixture only in the benchmark APK, never release.
         benchmark.assets.srcDir 'src/debug/assets'
         // Musicless fork icon (emerald, voice bars): the release build type outranks the stmobile flavor.
-        if (project.hasProperty("forkAppId")) release.res.srcDir 'src/musicless/res'
+        if (project.hasProperty("forkAppId")) release.res.srcDirs 'src/musicless/res', 'src/musicless/res-text'
+        // Debug builds start like the fork's release (MUSICLESS_FORK): its About links and texts too.
+        debug.res.srcDir 'src/musicless/res-text'
     }
 
     packagingOptions {

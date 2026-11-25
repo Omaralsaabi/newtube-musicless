@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Musicless fork: About links and the share text point at the fork (debug builds, and release
+     builds with -PforkAppId; see smarttubetv/build.gradle). Overrides common's and stmobile's strings. -->
+<resources>
+    <string name="about_source_code_url" translatable="false">https://github.com/yshalsager/newtube-musicless</string>
+    <string name="about_license_url" translatable="false">https://github.com/yshalsager/newtube-musicless/blob/musicless/LICENSE</string>
+    <string name="mobile_about_repo_url" translatable="false">https://github.com/yshalsager/newtube-musicless</string>
+    <string name="mobile_about_site_url" translatable="false">https://yshalsager.github.io/newtube-musicless/</string>
+    <string name="mobile_about_star">Star NewTube Musicless on GitHub</string>
+    <string name="mobile_about_share">Share NewTube Musicless</string>
+    <string name="mobile_about_share_text">NewTube Musicless — YouTube on your phone without the music: %1$s</string>
+</resources>

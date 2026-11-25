@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mobile_about_star">امنح NewTube Musicless نجمة على GitHub</string>
+    <string name="mobile_about_share">مشاركة NewTube Musicless</string>
+    <string name="mobile_about_share_text">NewTube Musicless — يوتيوب على هاتفك بدون موسيقى: %1$s</string>
+</resources>
