@@ -38,6 +38,7 @@ ExoPlayer audio decoder
 | `MusiclessDsp` | Spleeter's STFT/ISTFT and the voice mask `v / (v + 2a)`, ported from ieasybooks/musicless. The processor's worker keeps only the full-size (512-frame) one between windows; the small ramp sizes are built per use (~22 MB saved). |
 | `MusiclessAudioSink` | Feeds the processor outside Media3's synchronous loop, writes finished voices to the AudioTrack (also from `hasPendingData()`, so they play even when no new input arrives), and reports a **hold** while voices aren't ready. |
 | `MusiclessHold` | Tells the player screen about holds; it shows "Preparing voices…" and keeps the clock from running ahead. A 100 ms debounce ignores short AudioTrack gaps. |
+| `MusiclessFile` | Removes the music from a download before it is saved (`DownloadJob.removeMusic`): decode → `MusiclessAudioProcessor` → AAC, then NewTube's muxer joins it with the video. Fails the download ("Couldn't remove the music") rather than save a silent file or one with music. While a video is open it only feeds the model when the model thread is idle. |
 | `MusiclessDownloadGate` | Pauses playback while the model downloads, without losing the user's play/pause choice. |
 
 Where it plugs into the app:
@@ -47,6 +48,11 @@ Where it plugs into the app:
   (`MobilePlaybackActivity.restartEngine`): from Settings on resume, or from the player's gear menu
   row "Remove music" (`openPlayerMenu`).
 - `MobileMainApplication.onCreate` starts the model download at launch when the switch is on.
+- Downloads: `DownloadJob` runs `MusiclessFile` when the switch is on and marks the item
+  `voicesOnly`. Playing such a file, `Media3PlayerController.openUrlList` sets
+  `MusiclessAudioSink.voicesOnlySource`, and the processor passes the audio through without the model;
+  every other source resets it, so it is separated as usual. Downloads made with the switch off (or
+  before this) keep their music.
 
 Known behaviour and limits:
 
@@ -81,6 +87,9 @@ NewTube (and its F-Droid twin stays byte-identical):
 | `-PforkBuild=N` | `versionCode = upstream code × 100 + N`, `versionName = <upstream>-musicless.N` |
 | `-PforkUpdateUrl=…/releases/latest/download/musicless.json` | The in-app updater's feed; without it the fork build has no updater |
 | `-PmusiclessModelBaseUrl=…/releases/download/musicless-models-v1` | Where the models are downloaded from |
+
+Debug builds (`assembleStmobileDebug`) always have `MUSICLESS_FORK` on and the fork's model URL, so
+they start like a release; they keep NewTube's app id and updater.
 
 What `MUSICLESS_FORK` changes (new installs only; anything the user picks wins):
 
@@ -134,7 +143,9 @@ In the fork's Actions settings, NewTube's `discord`, `virustotal_scan`, `update-
 3. New phone strings arrive in English only: translate the missing Arabic ones (compare
    `values/` with `values-ar/` in `smarttubetv/src/stmobile/res` and `common/src/main/res`).
 4. Run the Musicless tests and a device check before tagging:
-   `./gradlew :smarttubetv:testStmobileDebugUnitTest --tests 'com.newtube.mobile.player.Musicless*'`.
+   `./gradlew :smarttubetv:testStmobileDebugUnitTest --tests 'com.newtube.mobile.player.Musicless*'`,
+   and on an x86_64 emulator the download tests:
+   `./gradlew -PemulatorAbi :smarttubetv:connectedStmobileDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=com.newtube.mobile.player.MusiclessFileTest,com.newtube.mobile.downloads.MediaMuxHelperTest`.
 
 ## Building locally
 

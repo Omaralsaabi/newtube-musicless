@@ -28,6 +28,8 @@ and keeps the voices. Made for Muslims who avoid music, with an Arabic interface
 - **Remove music, on by default.** The phone separates each video's sound into voices and music
   with a small AI model and plays only the voices. Turn it on or off in Settings or in the
   player's menu (the gear icon), for videos and audio-only playback.
+- **Downloads without music too.** With music removal on, a downloaded video or audio file is saved
+  with only the voices, so it plays without music in the gallery and any other app.
 - **Defaults for a Muslim audience** on a fresh install: Arabic interface, no Home feed (YouTube's
   signed-out Home can't be filtered), no Up next suggestions, videos pause when they end, and
   thumbnails taken from the video itself instead of the uploader's (DeArrow). Shorts are always
@@ -81,6 +83,7 @@ in **[docs/musicless/HANDOFF.md](docs/musicless/HANDOFF.md)**.
 - **إزالة الموسيقى مفعّلة افتراضيًا**: يفصل الهاتف صوت الفيديو إلى أصوات وموسيقى بنموذج ذكاء
   اصطناعي صغير، ويشغّل الأصوات فقط. التشغيل والإيقاف من الإعدادات أو من قائمة المشغّل.
 - **المعالجة على هاتفك**: لا يُرسَل أي صوت إلى أي خادم.
+- **التنزيلات بدون موسيقى أيضًا**: يُحفَظ الفيديو المحمَّل بالأصوات فقط، فيعمل بدون موسيقى في أي تطبيق.
 - **إعدادات مناسبة**: واجهة عربية، بدون الصفحة الرئيسية ولا المقاطع القصيرة (Shorts)، بدون
   اقتراحات «التالي»، وصور مصغّرة من لقطات الفيديو نفسه.
 - **تطبيق مستقل** بأيقونة خضراء، يُثبَّت بجانب NewTube الرسمي ويتحدّث تلقائيًا من هذا المستودع.
