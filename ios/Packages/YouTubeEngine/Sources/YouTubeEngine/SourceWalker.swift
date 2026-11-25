@@ -73,18 +73,44 @@ public actor SourceWalker {
     }
     private var circuit: Circuit?
     private var probePending = false
+    /// RecentRefusals: per video, the sources that refused it lately (30 min), dropped on a serve.
+    private var refusals: [String: [ClientProfile: (at: ContinuousClock.Instant, kids: Bool)]] = [:]
+    private var refusalOrder: [String] = []
+    static let refusalTTL: Duration = .seconds(30 * 60)
+    static let refusalVideos = 16
+    /// BotWallBook's route record: the account route failed (a media 403) for a video on a network;
+    /// a second video within 30 min benches it for the network. Persisted (Android keeps it within a
+    /// boot), on the wall clock.
+    private struct RouteRecord: Codable {
+        var videos: [String: Date] = [:]
+        var until: Date?
+    }
+    private var routeFailures: [String: RouteRecord] = [:]
+    static let routeFailureTTL: TimeInterval = 30 * 60
+    private let date: @Sendable () -> Date
+    private let routeStore: URL?
     private var repeatedLogin: (video: String, at: ContinuousClock.Instant)?
     private var anonChallenge: (network: String, until: ContinuousClock.Instant)?
 
     /// - Parameters:
     ///   - now: the clock (tests replay a device's timing).
     ///   - network: the current network's signature (`NetworkWatcher`); a change clears the circuit.
+    ///   - date: the wall clock, for the persisted route record.
+    ///   - routeStore: where the account route's record persists; nil keeps it in memory.
     public init(now: @escaping @Sendable () -> ContinuousClock.Instant = { .now },
+                date: @escaping @Sendable () -> Date = { Date() },
                 network: @escaping @Sendable () async -> String? = { nil },
+                routeStore: URL? = nil,
                 log: @escaping @Sendable (String) -> Void = { _ in }) {
         self.now = now
+        self.date = date
         self.network = network
+        self.routeStore = routeStore
         self.log = log
+        if let routeStore, let data = try? Data(contentsOf: routeStore),
+           let decoded = try? JSONDecoder().decode([String: RouteRecord].self, from: data) {
+            routeFailures = decoded
+        }
     }
 
     /// Walks the sources for `videoID`. `context.anonChallenged` is filled in from memory.
@@ -95,10 +121,23 @@ public actor SourceWalker {
         var context = base
         context.anonChallenged = isAnonChallenged(network: networkKey)
         let lane = context.lane
+        let time = now()
+        if isRouteFailed(network: networkKey, videoID: videoID) { context.accountRouteBenched = true }
+        // A recovery walk asks what refused this video moments ago after everything else, and a
+        // made-for-kids refusal puts the sources that never serve one behind the suspect.
+        if let suspect = context.recoverySuspect {
+            context.recoveryRefused = recentRefusals(videoID: videoID, at: time)
+            context.recoveryKidsRefused = SourcePlanner.servesMadeForKids(suspect) && hasMadeForKidsRefusal(videoID: videoID, at: time)
+        }
         var order = SourcePlanner.order(context)
         log("player-ring plan video=\(videoID) lane=\(lane.rawValue)"
             + (context.recoverySuspect.map { " suspect=\($0.id)" } ?? "")
-            + (context.anonChallenged ? " anon-challenged" : "") + " order=\(order.map(\.id))")
+            + (context.recoveryKidsRefused ? " made-for-kids" : "") + (context.vodVrLate ? " vod-vr-late" : "")
+            + (context.anonChallenged ? " anon-challenged" : "") + (context.accountRouteBenched ? " account-route=benched" : "")
+            + (context.benched.isEmpty ? "" : " walled=\(context.benched.map(\.id).sorted())")
+            + (context.refreshed.isEmpty ? "" : " refreshed=\(context.refreshed.map(\.id).sorted())")
+            + (context.recoveryRefused.isEmpty ? "" : " refused=\(context.recoveryRefused.map(\.id).sorted())")
+            + " order=\(order.map(\.id))")
 
         var result = WalkResult(answer: nil, client: nil, playable: false, asked: [])
         func mark(_ line: String) {
@@ -113,7 +152,8 @@ public actor SourceWalker {
         var botCheck = BotCheckWalkState()
         var consensus = UnplayableConsensus()
         var attempted = Set<ClientProfile>()
-        var anonTizenSpeculative = false
+        // TV_TIZEN planned third signed out (vod-vr-late) is the same anonymous ask: the short budget.
+        var anonTizenSpeculative = context.vodVrLate && lane == .signedOut
         var firstAgeGate: (PlayerAnswer, ClientProfile)?
         var refused = Set<ClientProfile>()
         var anonChallengeHits = 0
@@ -157,6 +197,7 @@ public actor SourceWalker {
             if let answer, kind == .contentRefused, !Self.hasLiveSignal(answer), !client.isWebPotRequired {
                 botCheck.contentRefusals += 1
             }
+            if let answer { noteRecent(videoID: videoID, client: client, answer: answer, kind: kind!, playable: playable) }
             // Signed out, an anonymous content refusal admits TV_TIZEN without the account, once.
             if let answer, SourcePlanner.admitsAccountRouteAfter(lane: lane, client: client), kind == .contentRefused,
                !Self.hasLiveSignal(answer), liveWithoutDash == nil, !attempted.contains(SourcePlanner.accountRoute),
@@ -279,6 +320,65 @@ public actor SourceWalker {
         result.answer = firstUnplayable?.0
         result.client = firstUnplayable?.1
         return result
+    }
+
+    // MARK: Recovery memory
+
+    /// The player's media for `videoID` got a 403 from `client`'s links. For the account route, its
+    /// route record (BotWallBook.noteRouteFailed): benched for that video; for the network once a
+    /// second video fails within 30 min.
+    public func noteMediaRefused(videoID: String, client: ClientProfile) async {
+        guard client == SourcePlanner.accountRoute, let network = await network() else { return }
+        let time = date()
+        var record = routeFailures[network] ?? RouteRecord()
+        record.videos = record.videos.filter { time < $0.value }
+        let otherVideo = record.videos.keys.contains { $0 != videoID }
+        record.videos[videoID] = time.addingTimeInterval(Self.routeFailureTTL)
+        if otherVideo { record.until = time.addingTimeInterval(Self.routeFailureTTL) }
+        routeFailures[network] = record
+        if let routeStore, let data = try? JSONEncoder().encode(routeFailures) {
+            try? FileManager.default.createDirectory(at: routeStore.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: routeStore, options: .atomic)
+        }
+        log("account-route failed reason=media-403 video=\(videoID) scope=\(otherVideo ? "network" : "video")")
+    }
+
+    private func isRouteFailed(network: String?, videoID: String) -> Bool {
+        guard let network, let record = routeFailures[network] else { return false }
+        let time = date()
+        if let until = record.until, time < until { return true }
+        return record.videos[videoID].map { time < $0 } ?? false
+    }
+
+    /// RecentRefusals.noteRefused / noteServed.
+    private func noteRecent(videoID: String, client: ClientProfile, answer: PlayerAnswer, kind: AnswerKind, playable: Bool) {
+        if playable {
+            refusals[videoID]?[client] = nil
+            return
+        }
+        guard Self.isRefusalOfTheVideo(client: client, answer: answer, kind: kind) else { return }
+        let kids = SourcePlanner.refusesMadeForKids(client) && kind == .contentRefused && !Self.hasLiveSignal(answer)
+        refusals[videoID, default: [:]][client] = (now(), kids)
+        refusalOrder.removeAll { $0 == videoID }
+        refusalOrder.append(videoID)
+        while refusalOrder.count > Self.refusalVideos { refusals[refusalOrder.removeFirst()] = nil }
+    }
+
+    private func recentRefusals(videoID: String, at time: ContinuousClock.Instant) -> Set<ClientProfile> {
+        Set((refusals[videoID] ?? [:]).filter { time - $0.value.at < Self.refusalTTL }.keys)
+    }
+
+    private func hasMadeForKidsRefusal(videoID: String, at time: ContinuousClock.Instant) -> Bool {
+        (refusals[videoID] ?? [:]).values.contains { $0.kids && time - $0.at < Self.refusalTTL }
+    }
+
+    /// A refusal about the video for this identity (which a recovery would hear again): a content
+    /// refusal, a sign-in request or an age gate; not a bot check, a live signal or WEB_EMBED's 152.
+    static func isRefusalOfTheVideo(client: ClientProfile, answer: PlayerAnswer, kind: AnswerKind) -> Bool {
+        let status = answer.playability.status
+        let aboutTheVideo = status == "UNPLAYABLE" || status == "LOGIN_REQUIRED" || kind == .ageGate
+        return aboutTheVideo && kind != .served && kind != .liveWithoutDash && kind != .botChallenge && !hasLiveSignal(answer)
+            && !(client == .webEmbed && answer.playability.text?.contains("152") == true)
     }
 
     // MARK: Cross-walk memory

@@ -1,10 +1,12 @@
 import AVFoundation
 import Foundation
 import Testing
+import os
 @testable import MediaPipeline
 
-/// US-013: the picture on the voices' clock, seeks, the background, and the segment cache.
-@Suite struct VideoPathTests {
+/// US-013: the picture on the voices' clock, seeks, the background, and the segment cache; US-017's
+/// recovery from a wall.
+@Suite(.serialized) struct VideoPathTests {
     // MARK: Segment cache and prefetch
 
     @Test func cacheEvictsTheLeastRecentlyUsedSegmentOnly() {
@@ -136,6 +138,59 @@ import Testing
         await rig.player.close()
     }
 
+    // MARK: 403 recovery (US-017)
+
+    @Test func aWallRefusalIsRecoveredOnceForBothTracksAndPlaybackCarriesOn() async throws {
+        let refusals = LockedRefusals()
+        let audio = try TwoSegmentFile(), pictures = try TwoSegmentFile(itag: 160)
+        var freshAudio = audio.mediaFile, freshVideo = pictures.mediaFile
+        freshAudio.url = URL(string: audio.mediaFile.url.absoluteString + "&id=fresh")!
+        freshVideo.url = URL(string: pictures.mediaFile.url.absoluteString + "&id=fresh")!
+        let recovered = RecoveredFiles(audio: freshAudio, video: freshVideo)
+        let rig = try PlayerRig(video: true, syntheticWall: 4) { refusal in
+            refusals.append(refusal)
+            try? await Task.sleep(for: .milliseconds(200))  // the recovery walk
+            return recovered
+        }
+        await rig.player.start(at: 0)
+        try await rig.eventually { await rig.player.snapshot().status == .playing }
+        try await rig.eventually { rig.lines.contains { $0.hasPrefix("wall-swap") } && rig.videoLines.count > 1 }
+        try await Task.sleep(for: .milliseconds(500))
+        let all = refusals.all
+        #expect(all.count == 1, "one recovery for the open, both tracks served by it (\(all))")
+        let first = try #require(all.first)
+        #expect(first.forbiddenMs >= 4_000, "refused at the first segment past the wall (\(first))")
+        #expect(first.lowestServedMs == 0 && first.highestServedMs < 4_000, "the open's served requests (\(first))")
+        #expect(rig.lines.contains { $0.hasPrefix("wall-swap") && $0.contains("repointed=y") })
+        #expect(await rig.player.snapshot().status == .playing, "no failure, no rewind")
+        #expect(!rig.lines.contains { $0.hasPrefix("voices failed") })
+        // The 23 KB picture came whole with its header request; the audio's segment 1 was refused.
+        #expect(first.track == .audio)
+        let freshRequests = rig.audioStub.requests.filter { $0.url?.query?.contains("id=fresh") == true }
+        #expect(!freshRequests.isEmpty, "the refused segment was read again from the new URL")
+        await rig.player.close()
+    }
+
+    @Test func withoutACopyOfTheFileTheVoicesSwitchToTheReplacementAtThePlayhead() async throws {
+        let audio = try TwoSegmentFile()
+        // Another file to the recovery: same bytes, but another lmt (an encode the old answer didn't have).
+        var other = audio.mediaFile
+        other.lastModified = "1701"
+        other.url = URL(string: audio.mediaFile.url.absoluteString + "&id=other")!
+        let stub = MediaStub()
+        stub.serve { request in .partial(audio.body, request) }
+        let replacementFetcher = MediaFetcher(file: other, session: stub.session, hosts: MediaHostBook(), network: FakeNetwork())
+        let replacement = RecoveredFiles(audio: .replacement(FMP4Source(file: other, initRange: audio.initRange, indexRange: audio.indexRange),
+                                                             replacementFetcher), video: nil)
+        let rig = try PlayerRig(syntheticWall: 4) { _ in replacement }
+        await rig.player.start(at: 0)
+        try await rig.eventually { rig.lines.contains { $0.hasPrefix("voices switch-audio itag=140") } }
+        try await rig.eventually { await rig.player.snapshot().status == .playing }
+        #expect(!rig.lines.contains { $0.hasPrefix("voices failed") })
+        #expect(!stub.requests.isEmpty, "the replacement file is read")
+        await rig.player.close()
+    }
+
     // MARK: Helpers
 
     static func field(_ name: String, in line: String) -> String? {
@@ -152,4 +207,10 @@ import Testing
             try await Task.sleep(for: .milliseconds(10))
         }
     }
+}
+
+final class LockedRefusals: Sendable {
+    private let storage = OSAllocatedUnfairLock(initialState: [MediaRefusal]())
+    func append(_ refusal: MediaRefusal) { storage.withLock { $0.append(refusal) } }
+    var all: [MediaRefusal] { storage.withLock { $0 } }
 }

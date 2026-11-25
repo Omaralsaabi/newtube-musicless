@@ -89,6 +89,8 @@ xcrun devicectl device process launch --device "$DEVICE_ID" --terminate-existing
   `--terminate-existing`), `--sync-check [<id>]` (beeps vs marker frames, AAC vs Opus) and
   `--delay-check [<id> …]` (AAC vs Opus delay by cross-correlation).
 - `--solver-check` (US-016): the challenge solver's cold, preprocessed and memo times on the phone.
+- `--synthetic-wall` (US-017): the first answer's links refuse past 60 s of stream (its walls go to a
+  separate book); `--wall-check` plays 4 videos from 0:50 through it and logs `wall-check done passed=N/4`.
 - `/player` goes through `SourceWalker` (US-015, the signed-out lane of Android's walk) and ciphered
   winners through `CipherResolver` (US-016). `WalkReplayTests` replays Android's device walks;
   `ios/tools/solver_oracle.sh` refreshes the solver fixture (needs node) when YouTube ships a new player.

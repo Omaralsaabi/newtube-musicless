@@ -61,7 +61,8 @@ struct RootView: View {
                         WatchDebugView(watch: watch, autoPlay: id.map { ($0, at) },
                                        seekCheck: arguments.contains("--seek-check"),
                                        backgroundTest: arguments.contains("--background-test"),
-                                       qualityCheck: arguments.contains("--quality-check"))
+                                       qualityCheck: arguments.contains("--quality-check"),
+                                       wallCheck: arguments.contains("--wall-check"))
                     }
                 }
             }
@@ -104,6 +105,7 @@ struct RootView: View {
                                                 seconds: seconds) }
             }
             // `--voices [<id>] [--voices-at <seconds>]` plays a video's voices at launch (US-012).
+            if path.isEmpty, arguments.contains("--wall-check") { path = [.voices(id: nil, at: 0)] }
             if path.isEmpty, let index = arguments.firstIndex(of: "--voices") {
                 let next = arguments.indices.contains(index + 1) ? arguments[index + 1] : ""
                 let id = next.hasPrefix("--") || next.isEmpty ? WatchDebug.presets[0].id : next

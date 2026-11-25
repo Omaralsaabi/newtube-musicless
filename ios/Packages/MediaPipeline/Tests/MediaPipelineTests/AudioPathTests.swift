@@ -5,7 +5,7 @@ import os
 @testable import MediaPipeline
 
 /// US-012: the pieces between the demuxer and the renderer.
-@Suite struct AudioPathTests {
+@Suite(.serialized) struct AudioPathTests {
     // MARK: HoldDebounce (Android's MusiclessHoldTest.debounceIgnoresShortAudioTrackGaps)
 
     @Test func debounceIgnoresShortGaps() {
@@ -232,13 +232,14 @@ final class PlayerRig: Sendable {
     /// Kept alive for its renderer; never touched after init.
     nonisolated(unsafe) let layer: AVSampleBufferDisplayLayer?
     let videoStub: MediaStub?
+    let audioStub: MediaStub
     private let collected = LockedLines()
     var lines: [String] { collected.lines.filter { !$0.hasPrefix("hold ") } }
     var holds: [String] { collected.lines.filter { $0.hasPrefix("hold ") } }
     var videoLines: [String] { collected.lines.filter { $0.hasPrefix("video ") } }
 
     init(chunkFrames: Int = 44_100, delays: [Int: Duration] = [:], refuseFrom: Int64? = nil, video: Bool = false,
-         audioDelay: Double = 0) throws {
+         audioDelay: Double = 0, syntheticWall: Double? = nil, recover: PlayerEngine.Recover? = nil) throws {
         let file = try TwoSegmentFile()
         let stub = MediaStub()
         stub.serve { request in
@@ -246,6 +247,7 @@ final class PlayerRig: Sendable {
             return .partial(file.body, request)
         }
         let fetcher = MediaFetcher(file: file.mediaFile, session: stub.session, hosts: MediaHostBook(), network: FakeNetwork())
+        audioStub = stub
         var input: VideoInput?
         if video {
             let pictures = try TwoSegmentFile(itag: 160)
@@ -266,9 +268,10 @@ final class PlayerRig: Sendable {
         var configuration = PlayerEngine.Configuration()
         configuration.muted = true
         configuration.audioDelay = audioDelay
+        configuration.syntheticWallSeconds = syntheticWall
         let sink = collected
         player = PlayerEngine(audio: file.source, fetcher: fetcher, stage: stage, video: input, configuration: configuration,
-                              log: { sink.append($0) }, holdLog: { sink.append($0) })
+                              recover: recover, log: { sink.append($0) }, holdLog: { sink.append($0) })
     }
 
     func eventually(timeout: Duration = .seconds(5), _ condition: () async -> Bool) async throws {

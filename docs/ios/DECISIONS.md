@@ -732,6 +732,72 @@ Personal Team test (Q8, D15) moves with them: there is still no paid-only capabi
   - Measured: first ciphered video cold, 1.76 s of solve and 2.9 s tap to voices. After the
     warm-up, 86 ms and **1.13 s**.
 
+### D48. 403 recovery and the one-minute wall — US-017
+
+- **The engine's side:**
+  - A `MediaRefused` in either feed goes to the app's recovery as a `MediaRefusal`. It carries the
+    track, the itag, where the refused request started on the stream, and the lowest and highest
+    starts of this open's served requests. The request starts are marked by `FMP4Reader`; the opening
+    segment that came with the header request counts as one at 0.
+  - One recovery runs per open: the other track awaits the same walk.
+  - What comes back, for each track:
+    - the same file (itag, `lmt` and length) at a new URL: both fetchers repoint, and the feeds carry
+      on from the refused segment; nothing is visible;
+    - or a replacement file: audio restarts at the playhead (a short hold, like the Remove-music
+      switch), and the picture catches up as after the background.
+  - Android reloads the player in that second case.
+- **The app's side** (`VideoResolver.recover`):
+  - It blames the winner: the account route's record (`SourceWalker.noteMediaRefused`) and the wall
+    book.
+  - It re-rolls the visitor when the book asks.
+  - It walks with the suspect last, in the VOD order that asks ANDROID_VR late, with walled sources
+    benched and re-rolled ones refreshed; then deciphers the answer.
+  - It picks the same files by itag, `lmt` and length. TV_TIZEN's answers can hold two itag-140 files
+    (one with DRC), so the itag alone repointed to the wrong one and the fetcher refused it.
+- **`WallBook`** ports `PlaybackWallMemory` and `notePlaybackMedia403`.
+  - **Signature:**
+    - `ordinary`: refused before 55 s of stream, or a served request started at 65 s or later
+      (Android logs this as `none`; the PRD called it `ordinary`);
+    - `wall`: a request below 60 s was served;
+    - `ambiguous` otherwise. It is confirmed by a remembered pair, or by a second refusal past the
+      wall on the same video.
+  - **Memory:** 6 h, 32 pairs, keyed by a 10-hex-character visitor fingerprint (SHA-256), never the
+    visitor itself, and persisted.
+  - **Bench:** the source is benched in that video's recoveries for 30 min.
+  - **Re-roll:** the first wall of VISIONOS or ANDROID_VR re-rolls the visitor, 2 per 6 h and once
+    per video (persisted). `VisitorIdentity.reroll` asks youtube.com/tv without the stored identity
+    cookie.
+  - **Differs from Android:** iOS re-rolls its one visitor (the youtube.com/tv one, used by every app
+    source); Android re-rolls the web session's visitor (VISIONOS, ANDROID_VR).
+  - Log lines: `playback-media403 … signature=wall|ambiguous|ordinary`, `playback-wall … how=…`,
+    `wall-swap …`.
+- **The walk gained Android's recovery memory:**
+  - `RecentRefusals`: sources that refused the video in the last 30 min are asked after the suspect;
+    after a made-for-kids refusal, the sources that never serve kids videos go behind it.
+  - The account route's record (`BotWallBook.noteRouteFailed`): a media 403 benches TV_TIZEN for that
+    video for 30 min, and for the network once a second video fails. It is persisted (Android keeps
+    it within a boot), so a restarted app doesn't re-admit TV_TIZEN.
+- **The replay** now covers the three recovery cases.
+  - The kids video's recovery from TV_TIZEN goes straight to WEB_EMBED (recent refusals).
+  - The bench-and-recover case uses the made-for-kids order.
+  - The walled visitor's recovery asks WEB_EMBED, then TV_TIZEN, which serves, as on the device.
+  - **Not supported on iOS:** four walks where WEB_EMBED answered SABR-only with an HLS manifest. Android
+    plays those over HLS; the iOS engine plays fMP4 only, and YouTube's VOD HLS is MPEG-TS. They're
+    named in the test, and iOS walks on. HLS for VOD is left for later.
+- **The synthetic wall** (`--synthetic-wall`, the "Synthetic wall at 1:00" switch, `--wall-check`):
+  - the first answer's links refuse every request starting at or past 60 s of stream
+    (`MediaFetcher.setSyntheticRefusal`), until a recovery repoints them;
+  - its walls go to a separate book (`walls-synthetic.json`), and it skips the account route's
+    record, so a fake wall never benches a source for real. Re-rolls are real.
+- **iPhone, `--wall-check`** (4 videos from 0:50, home Wi-Fi):
+  - **First run, 3 of 4:**
+    - two recoveries went to TV_TIZEN (641–677 ms) and one to VISIONOS (1,068 ms);
+    - one failed: ANDROID_VR had no copy of TV_TIZEN's itag-140 file. That led to the replacement
+      path.
+  - **After the fix, 4 of 4:** no error, no rewind; each recovery walk took 0.94–1.17 s and
+    repointed the same files (re-roll budget spent, VISIONOS answering fresh links last).
+  - The replacement path is covered by a package test.
+
 ## Settled `[verify]` items
 
 | PRD item | Result | Evidence |

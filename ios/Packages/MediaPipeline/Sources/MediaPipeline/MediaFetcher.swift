@@ -96,16 +96,28 @@ public actor MediaFetcher {
     }
 
     /// Points the rest of the file at another answer's URL. Only for the same file (itag, lmt,
-    /// clen); the URL's `id` changes per answer.
+    /// clen); the URL's `id` changes per answer. A synthetic wall belongs to the old URL and goes.
     public func repoint(to other: MediaFile) throws {
         guard other.isSameFile(as: file) else { throw MediaFetchError.notSameFile }
         log("media repoint itag=\(file.itag) host=\(file.url.host ?? "?") -> \(other.url.host ?? "?")")
         file = other
+        syntheticRefusalFrom = nil
     }
+
+    /// Debug (US-017): this URL refuses (403) every range starting at or past `offset`, as a walled
+    /// (visitor, source) pair's links do past 60 s of stream. Cleared by `repoint`.
+    public func setSyntheticRefusal(fromByte offset: Int64?) {
+        syntheticRefusalFrom = offset
+    }
+    private var syntheticRefusalFrom: Int64?
 
     /// Exactly `range` (inclusive), through a `Range` header.
     public func read(_ range: ClosedRange<Int64>) async throws -> Data {
         guard range.lowerBound >= 0, range.upperBound < file.contentLength else { throw MediaFetchError.outOfBounds }
+        if let wall = syntheticRefusalFrom, range.lowerBound >= wall {
+            log("media itag=\(file.itag) range=\(range.lowerBound)-\(range.upperBound) status=403 synthetic-wall=y")
+            throw MediaRefused(itag: file.itag, byteOffset: range.lowerBound, url: file.url, status: 403)
+        }
         var failures = 0
         var lastCause = ""
         while true {

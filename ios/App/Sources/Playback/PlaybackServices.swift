@@ -18,6 +18,10 @@ final class PlaybackServices {
     /// The source walk (US-015) and what it asks with.
     let walker: SourceWalker
     let sources: PlayerSources
+    /// The one-minute wall's memory (US-017); a separate book while a synthetic wall is tested, so
+    /// a fake wall never benches a source for real.
+    let walls: WallBook
+    let syntheticWalls: WallBook
     /// The signature and n solver (US-016) and the player JS it solves with.
     let solver: ChallengeSolver
     let cipher: CipherResolver
@@ -27,7 +31,10 @@ final class PlaybackServices {
         let log: @Sendable (String) -> Void = { AppLog.netPath.info($0) }
         let youtube = URL.applicationSupportDirectory.appending(path: "youtube", directoryHint: .isDirectory)
         identity = VisitorIdentity(transport: transport, storeURL: youtube.appending(path: "visitor.json"), log: log)
-        walker = SourceWalker(network: { await NetworkWatcher.shared.signature() }, log: log)
+        walker = SourceWalker(network: { await NetworkWatcher.shared.signature() }, routeStore: youtube.appending(path: "routes.json"),
+                              log: log)
+        walls = WallBook(storeURL: youtube.appending(path: "walls.json"), log: log)
+        syntheticWalls = WallBook(storeURL: youtube.appending(path: "walls-synthetic.json"), log: log)
         sources = PlayerSources(transport: transport, visitor: identity,
                                 embed: EmbedIdentityStore(transport: transport, storeURL: youtube.appending(path: "embed.json"), log: log),
                                 log: log)
@@ -135,8 +142,13 @@ struct ResolvedMedia: Sendable {
     var vp9: MediaFile?
     /// Seconds the AAC runs late without declaring it (`YouTubeAudio.delay`), for the engine.
     var audioDelay: Double
-    /// The source that served it (the walk's winner).
+    /// The source that served it (the walk's winner), and the visitor its request carried (nil for
+    /// WEB_EMBED's embed identity), which the wall rule blames.
     var client: String
+    var visitor: String?
+    /// The itags playing, for a recovery's repoint.
+    var audioItag: Int
+    var videoItag: Int?
     var playerMs: Int
 }
 
@@ -182,6 +194,31 @@ enum YouTubeAudio {
     }
 }
 
+/// What a playing video's recovery blames and repoints: the source that served the files, the
+/// visitor its request carried, and the itags playing (the quality picker changes the video's).
+actor PlayingFiles {
+    struct Snapshot: Sendable {
+        var client: String
+        var visitor: String?
+        var audio: MediaFile
+        var video: MediaFile?
+    }
+    private var state: Snapshot
+
+    init(_ media: ResolvedMedia) {
+        state = Snapshot(client: media.client, visitor: media.visitor, audio: media.audio.file, video: media.video?.file)
+    }
+
+    func snapshot() -> Snapshot { state }
+    func served(by client: String, visitor: String?, audio: MediaFile?, video: MediaFile?) {
+        state.client = client
+        state.visitor = visitor
+        if let audio { state.audio = audio }
+        if let video { state.video = video }
+    }
+    func video(_ file: MediaFile) { state.video = file }
+}
+
 struct ResolveError: Error, CustomStringConvertible {
     let description: String
 }
@@ -189,11 +226,17 @@ struct ResolveError: Error, CustomStringConvertible {
 enum VideoResolver {
     /// Walks the sources (US-015), opens a ciphered winner (US-016), and picks the pair to play.
     @MainActor
-    static func media(for videoID: String, withVideo: Bool) async throws -> ResolvedMedia {
+    static func media(for videoID: String, withVideo: Bool, synthetic: Bool = false) async throws -> ResolvedMedia {
         let services = PlaybackServices.shared
         let sources = services.sources
         let start = ContinuousClock.now
-        let walk = await services.walker.walk(videoID: videoID, context: SourcePlanner.Context(lane: .signedOut)) { client, budget in
+        let visitor = try? await services.identity.current().visitorData
+        // Sources walled for this visitor go last (US-017), in the order that asks ANDROID_VR late.
+        let plan = await (synthetic ? services.syntheticWalls : services.walls).plan(videoID: videoID, recovery: false, appVisitor: visitor)
+        var context = SourcePlanner.Context(lane: .signedOut)
+        context.benched = plan.benched
+        context.vodVrLate = !plan.benched.isEmpty
+        let walk = await services.walker.walk(videoID: videoID, context: context) { client, budget in
             await sources.attempt(client, videoID: videoID, budget: budget)
         }
         let walkMs = Int((ContinuousClock.now - start) / .milliseconds(1))
@@ -242,7 +285,91 @@ enum VideoResolver {
                              videoOptions: options, opus: opus, vp9: vp9,
                              audioDelay: YouTubeAudio.delay(codecs: audioFormat.codecs, sampleRate: audioFormat.audioSampleRate),
                              client: walk.client?.id ?? "?",
+                             visitor: walk.client?.isEmbedded == true ? nil : visitor,
+                             audioItag: audioFormat.itag, videoItag: withVideo ? selection.video?.itag : nil,
                              playerMs: Int((ContinuousClock.now - start) / .milliseconds(1)))
+    }
+
+    /// A media 403's recovery (US-017; LANES §2.3, HANDOFF §34): the wall rule reads the refusal,
+    /// the source is blamed (the account route's record, the wall memory, a visitor re-roll for
+    /// VISIONOS or ANDROID_VR), a recovery walk asks it last, and the new answer's copies of the
+    /// playing files come back for a repoint. Nil when no source serves the same files.
+    static func recover(videoID: String, playing: PlayingFiles, refusal: MediaRefusal, synthetic: Bool) async -> RecoveredFiles? {
+        let services = await PlaybackServices.shared
+        let start = ContinuousClock.now
+        let walls = synthetic ? services.syntheticWalls : services.walls
+        let current = await playing.snapshot()
+        guard let suspect = SourcePlanner.baseOrder.first(where: { $0.id == current.client }) else { return nil }
+        // A synthetic wall is no evidence about the account route on this network.
+        if !synthetic { await services.walker.noteMediaRefused(videoID: videoID, client: suspect) }
+        let verdict = await walls.noteMedia403(videoID: videoID, client: suspect, visitor: current.visitor,
+                                               forbiddenMs: refusal.forbiddenMs, lowestServedMs: refusal.lowestServedMs,
+                                               highestServedMs: refusal.highestServedMs)
+        if verdict.rerollWanted, await walls.spendReroll(videoID: videoID) {
+            _ = try? await services.identity.reroll()
+        }
+        let visitor = try? await services.identity.current().visitorData
+        let plan = await walls.plan(videoID: videoID, recovery: true, appVisitor: visitor)
+        var context = SourcePlanner.Context(lane: .signedOut, recoverySuspect: suspect)
+        context.benched = plan.benched
+        context.refreshed = plan.refreshed
+        context.vodVrLate = true
+        let sources = services.sources
+        let walk = await services.walker.walk(videoID: videoID, context: context) { client, budget in
+            await sources.attempt(client, videoID: videoID, budget: budget)
+        }
+        guard walk.playable, var answer = walk.answer, let winner = walk.client else {
+            AppLog.netPath.info("wall-swap video=\(videoID) from=\(suspect.id) failed asked=\(walk.asked.map(\.id))")
+            return nil
+        }
+        guard let opened = try? await services.cipher.resolve(answer, playerURL: try? await services.identity.current().playerURL) else {
+            AppLog.netPath.info("wall-swap video=\(videoID) from=\(suspect.id) to=\(winner.id) failed=solve")
+            return nil
+        }
+        answer = opened
+        // The same file: itag, lmt and length (an answer can hold two itag-140 files, one with DRC).
+        func file(_ playing: MediaFile?) -> MediaFile? {
+            guard let playing else { return nil }
+            for format in answer.adaptiveFormats where format.itag == playing.itag {
+                guard let address = format.url, let url = URL(string: address), let length = format.contentLength else { continue }
+                let candidate = MediaFile(itag: format.itag, lastModified: format.lastModified, contentLength: length, url: url)
+                if candidate.isSameFile(as: playing) { return candidate }
+            }
+            return nil
+        }
+        // No copy of a playing file: switch that track to the answer's own choice (the same itag in
+        // another encode first, for the picture), at the playhead.
+        let selection = FormatSelector.select(answer)
+        func replacement(_ format: PlayerAnswer.Format?) -> RecoveredFiles.Track? {
+            guard let format, let source = source(format) else { return nil }
+            return .replacement(source, MediaFetcher(file: source.file, log: { AppLog.netPath.info($0) }))
+        }
+        let audioSame = file(current.audio), videoSame = file(current.video)
+        let audio: RecoveredFiles.Track? = audioSame.map(RecoveredFiles.Track.same) ?? replacement(selection.audio)
+        var video: RecoveredFiles.Track?
+        if let playingVideo = current.video {
+            video = videoSame.map(RecoveredFiles.Track.same)
+                ?? replacement(answer.adaptiveFormats.first { $0.itag == playingVideo.itag && $0.url != nil } ?? selection.video)
+        }
+        func describe(_ track: RecoveredFiles.Track?) -> String {
+            switch track {
+            case .same(let file)?: "same:\(file.itag)"
+            case .replacement(let source, _)?: "switch:\(source.file.itag)"
+            case nil: "missing"
+            }
+        }
+        func newFile(_ track: RecoveredFiles.Track?) -> MediaFile? {
+            switch track {
+            case .same(let file)?: file
+            case .replacement(let source, _)?: source.file
+            case nil: nil
+            }
+        }
+        await playing.served(by: winner.id, visitor: winner.isEmbedded ? nil : visitor, audio: newFile(audio), video: newFile(video))
+        AppLog.netPath.info("wall-swap video=\(videoID) from=\(suspect.id) to=\(winner.id) signature=\(verdict.signature.rawValue) "
+                            + "asked=\(walk.asked.map(\.id)) audio=\(describe(audio)) video=\(current.video == nil ? "none" : describe(video)) "
+                            + "ms=\(Int((ContinuousClock.now - start) / .milliseconds(1)))")
+        return RecoveredFiles(audio: audio, video: video)
     }
 
     private static func source(_ format: PlayerAnswer.Format) -> FMP4Source? {

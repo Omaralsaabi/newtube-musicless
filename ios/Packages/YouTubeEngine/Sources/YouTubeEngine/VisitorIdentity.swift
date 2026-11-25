@@ -63,6 +63,22 @@ public actor VisitorIdentity {
         return fresh
     }
 
+    /// A fresh visitor (the one-minute wall's re-roll, US-017): youtube.com/tv asked without the
+    /// stored identity cookie, so it hands out a new one. On failure the old visitor stays.
+    public func reroll() async throws -> VisitorState {
+        let previous = state
+        state = nil
+        refresh = nil
+        do {
+            let fresh = try await current()
+            log("playback-identity rerolled from=\(previous?.shortVisitor ?? "none") to=\(fresh.shortVisitor)")
+            return fresh
+        } catch {
+            state = previous
+            throw error
+        }
+    }
+
     /// The player JS's `signatureTimestamp`, fetched once per player URL; -1 when unknown, which
     /// QueryBuilder sends as is.
     public func signatureTimestamp() async -> Int {

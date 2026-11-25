@@ -106,6 +106,9 @@ public struct FMP4Segments: AsyncSequence, Sendable {
         public let index: Int
         public let reference: FMP4SegmentIndex.Reference
         public let data: Data
+        /// The first segment of a range request that went to googlevideo (not the cache or the
+        /// header's prefix): the wall rule reads request starts (US-017).
+        public var requestStart = false
     }
 
     let fetcher: MediaFetcher
@@ -183,12 +186,14 @@ public struct FMP4Segments: AsyncSequence, Sendable {
             let range = first...last
             return Task { [head, from] in
                 var data = head
-                if from <= wanted.upperBound { data.append(try await sequence.fetcher.read(from...wanted.upperBound)) }
+                let fetched = from <= wanted.upperBound
+                if fetched { data.append(try await sequence.fetcher.read(from...wanted.upperBound)) }
                 return range.map { index in
                     let bytes = references[index].bytes
                     let segment = data.subdata(in: Int(bytes.lowerBound - wanted.lowerBound)..<Int(bytes.upperBound - wanted.lowerBound + 1))
                     sequence.cache?.store(index, segment)
-                    return Segment(index: index, reference: references[index], data: segment)
+                    return Segment(index: index, reference: references[index], data: segment,
+                                   requestStart: fetched && bytes.contains(from))
                 }
             }
         }

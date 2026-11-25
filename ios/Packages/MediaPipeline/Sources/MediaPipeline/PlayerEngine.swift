@@ -34,6 +34,41 @@ public struct VideoInput: @unchecked Sendable {
     }
 }
 
+/// A media 403 the engine hands to the app's recovery (US-017): which track's file, and where on the
+/// stream the refused request started and this open's served requests started (ms; -1: none), the
+/// inputs of the one-minute wall's signature.
+public struct MediaRefusal: Sendable, Equatable {
+    public enum Track: String, Sendable { case audio, video }
+    public var track: Track
+    public var itag: Int
+    public var forbiddenMs: Int64
+    public var lowestServedMs: Int64
+    public var highestServedMs: Int64
+}
+
+/// What a recovery's new answer offers for each playing file: the same file at a new URL (a
+/// repoint, nothing visible), or, when it has no copy of it, another file to switch to at the
+/// playhead (audio: a short hold while the voices restart; video: the picture catches up).
+public struct RecoveredFiles: Sendable {
+    public enum Track: Sendable {
+        case same(MediaFile)
+        case replacement(FMP4Source, MediaFetcher)
+    }
+    public var audio: Track?
+    public var video: Track?
+
+    public init(audio: Track?, video: Track?) {
+        self.audio = audio
+        self.video = video
+    }
+
+    /// Both tracks repointed to the same files.
+    public init(audio: MediaFile?, video: MediaFile?) {
+        self.audio = audio.map(Track.same)
+        self.video = video.map(Track.same)
+    }
+}
+
 /// Plays a YouTube video with only the voices (US-012, US-013; PRD §4.2). Audio: fetch → demux →
 /// AAC decode → voice stage (the Separator) → LPCM sample buffers → `AVSampleBufferAudioRenderer`.
 /// Video: fetch → demux → H.264 sample buffers (still compressed; the renderer decodes them in
@@ -99,6 +134,9 @@ public actor PlayerEngine {
         /// declares): its presentation times move earlier by this much, and what falls before 0 is
         /// dropped. The app sets it for YouTube's AAC (D44); an edit list, where present, adds to it.
         public var audioDelay: Double = 0
+        /// Debug (US-017): the files the engine opens refuse (403) every request starting at or past
+        /// this stream position, until a recovery repoints them, as a walled pair's links do at 60 s.
+        public var syntheticWallSeconds: Double?
 
         public init() {}
     }
@@ -110,8 +148,8 @@ public actor PlayerEngine {
     private let queue = DispatchSerialQueue(label: "Musicless-Player", qos: .userInitiated)
     public nonisolated var unownedExecutor: UnownedSerialExecutor { queue.asUnownedSerialExecutor() }
 
-    private let audio: FMP4Source
-    private let fetcher: MediaFetcher
+    private var audio: FMP4Source
+    private var fetcher: MediaFetcher
     private let stage: VoiceStage
     private var video: VideoInput?
     private let configuration: Configuration
@@ -120,7 +158,7 @@ public actor PlayerEngine {
     private let onChange: @Sendable (Snapshot) -> Void
     private let renderer = AVSampleBufferAudioRenderer()
     private let synchronizer = AVSampleBufferRenderSynchronizer()
-    private let audioCache: SegmentCache
+    private var audioCache: SegmentCache
     private var videoCache: SegmentCache
 
     private var header: FMP4Header?
@@ -164,6 +202,14 @@ public actor PlayerEngine {
     /// Catching up after the background: late frames are hidden and don't count as starvation.
     private var videoCatchUp = false
 
+    // Recovery (US-017).
+    public typealias Recover = @Sendable (MediaRefusal) async -> RecoveredFiles?
+    private let recoverHandler: Recover?
+    private var recovering: Task<RecoveredFiles?, Never>?
+    /// This open's served media requests: the lowest and highest start on the stream (ms; -1: none).
+    private var servedLowMs: Int64 = -1
+    private var servedHighMs: Int64 = -1
+
     // Intent and hold.
     private var wantsToPlay = true
     private var removeMusic = true
@@ -183,11 +229,14 @@ public actor PlayerEngine {
     ///   - log: engine lines (`voices …`, `video …`); the app sends them to its `Player` category.
     ///   - holdLog: `hold reason=…` lines, in Android's format (its `Musicless` tag).
     ///   - onChange: status changes (start, holds, pause, end, failure), from the engine's queue.
+    ///   - recover: a media 403's recovery (US-017): a walk for the same files; nil fails playback.
     public init(audio: FMP4Source, fetcher: MediaFetcher, stage: VoiceStage, video: VideoInput? = nil,
                 configuration: Configuration = .init(),
+                recover: Recover? = nil,
                 log: @escaping @Sendable (String) -> Void = { _ in },
                 holdLog: @escaping @Sendable (String) -> Void = { _ in },
                 onChange: @escaping @Sendable (Snapshot) -> Void = { _ in }) {
+        self.recoverHandler = recover
         self.audio = audio
         self.fetcher = fetcher
         self.stage = stage
@@ -249,6 +298,10 @@ public actor PlayerEngine {
             return
         }
         guard !closed else { return }
+        if let wall = configuration.syntheticWallSeconds {
+            if let header { await armSyntheticWall(fetcher, header: header, at: wall, label: "audio") }
+            if let video, let videoHeader { await armSyntheticWall(video.fetcher, header: videoHeader, at: wall, label: "video") }
+        }
         outputTask = Task { await self.outputLoop() }
         tickTask = Task { await self.tickLoop() }
         await restart(at: seconds, reason: .start, passThrough: !removeMusic, video: true)
@@ -429,6 +482,7 @@ public actor PlayerEngine {
         let timescale = Double(track.timescale)
         let edit = Double(max(0, track.editMediaTime)) / timescale + configuration.audioDelay
         let first = header.index.seek(to: target + edit)?.index ?? 0
+        var nextIndex = first
         var segments = FMP4Reader.segments(fetcher, header: header, from: first, cache: audioCache).makeAsyncIterator()
         defer { segments.cancel() }
         do {
@@ -436,7 +490,22 @@ public actor PlayerEngine {
             let rate = decoder.sampleRate
             var toDrop: Int?
             var sent = false
-            while let segment = try await segments.next() {
+            while true {
+                let next: FMP4Segments.Segment?
+                do {
+                    next = try await segments.next()
+                } catch let refused as MediaRefused {
+                    // A routine 403: the app walks for the same file, the fetcher repoints, and the
+                    // feed carries on from the segment it was refused.
+                    segments.cancel()
+                    guard token == epoch, !closed, await recover(refused, track: .audio) else { throw refused }
+                    guard token == epoch, !closed else { return }
+                    segments = FMP4Reader.segments(fetcher, header: header, from: nextIndex, cache: audioCache).makeAsyncIterator()
+                    continue
+                }
+                guard let segment = next else { break }
+                nextIndex = segment.index + 1
+                noteServed(segment, index: header.index)
                 guard token == epoch, !closed else { return }
                 let samples = try FMP4Demuxer.parseSegment(segment.data, track: track)
                 var pcm = try decoder.decode(samples)
@@ -526,13 +595,28 @@ public actor PlayerEngine {
         let edit = max(0, track.editMediaTime)
         let first = header.index.seek(to: target + Double(edit) / Double(track.timescale))?.index ?? 0
         let targetTime = CMTime(value: Int64((target * Double(track.timescale)).rounded()), timescale: scale)
+        var nextIndex = first
         var segments = FMP4Reader.segments(video.fetcher, header: header, from: first, cache: videoCache, prefetch: true)
             .makeAsyncIterator()
         defer { segments.cancel() }
         var hidden = 0
         var shown = false
         do {
-            while let segment = try await segments.next() {
+            while true {
+                let next: FMP4Segments.Segment?
+                do {
+                    next = try await segments.next()
+                } catch let refused as MediaRefused {
+                    segments.cancel()
+                    guard token == videoEpoch, !closed, await recover(refused, track: .video) else { throw refused }
+                    guard token == videoEpoch, !closed else { return }
+                    segments = FMP4Reader.segments(video.fetcher, header: header, from: nextIndex, cache: videoCache, prefetch: true)
+                        .makeAsyncIterator()
+                    continue
+                }
+                guard let segment = next else { break }
+                nextIndex = segment.index + 1
+                noteServed(segment, index: header.index)
                 guard token == videoEpoch, !closed else { return }
                 for var sample in try FMP4Demuxer.parseSegment(segment.data, track: track) {
                     while !video.renderer.isReadyForMoreMediaData && token == videoEpoch && !closed {
@@ -590,6 +674,113 @@ public actor PlayerEngine {
         videoNeedsRestart = true
         videoCatchUp = true  // don't hold the voices for a picture that can't decode
         updateHold()
+    }
+
+    // MARK: Recovery (US-017)
+
+    /// One recovery for the open (the other track awaits the same walk); both tracks' fetchers are
+    /// repointed to the new answer's copies of their files. True when `track` may carry on.
+    private func recover(_ refused: MediaRefused, track: MediaRefusal.Track) async -> Bool {
+        guard let trackFetcher = track == .audio ? fetcher : video?.fetcher else { return false }
+        // Refused on a URL the track has already left (another track's recovery repointed it).
+        if await trackFetcher.file.url != refused.url { return true }
+        guard let recoverHandler else { return false }
+        let task: Task<RecoveredFiles?, Never>
+        if let recovering {
+            task = recovering
+        } else {
+            let refusal = MediaRefusal(track: track, itag: refused.itag, forbiddenMs: positionMs(track, byte: refused.byteOffset),
+                                       lowestServedMs: servedLowMs, highestServedMs: servedHighMs)
+            log("voices media403 track=\(track.rawValue) itag=\(refused.itag) forbiddenStartMs=\(refusal.forbiddenMs) "
+                + "servedStartMs=\(servedLowMs)..\(servedHighMs) status=\(refused.status)")
+            task = Task { await recoverHandler(refusal) }
+            recovering = task
+        }
+        let files = await task.value
+        if recovering == task { recovering = nil }
+        guard let files, !closed else {
+            log("voices recovery failed track=\(track.rawValue) itag=\(refused.itag)")
+            return false
+        }
+        var carriesOn = false
+        // Audio: repoint the same file, or switch to the replacement (which restarts the audio feed;
+        // the refused feed then sees a new epoch and leaves quietly).
+        switch files.audio {
+        case .same(let file)?:
+            if await repoint(fetcher, to: file) { carriesOn = carriesOn || track == .audio }
+        case .replacement(let source, let replacementFetcher)?:
+            let stillRefused = await fetcher.file.url == refused.url
+            if stillRefused || track == .audio { await switchAudio(to: source, fetcher: replacementFetcher) }
+        case nil: break
+        }
+        if let video {
+            switch files.video {
+            case .same(let file)?:
+                if await repoint(video.fetcher, to: file) { carriesOn = carriesOn || track == .video }
+            case .replacement(let source, let replacementFetcher)?:
+                let stillRefused = await video.fetcher.file.url == refused.url
+                if stillRefused || track == .video { try? await switchVideo(to: source, fetcher: replacementFetcher) }
+            case nil: break
+            }
+        }
+        log("wall-swap track=\(track.rawValue) itag=\(refused.itag) repointed=\(carriesOn ? "y" : "n")")
+        return carriesOn
+    }
+
+    private func repoint(_ target: MediaFetcher, to file: MediaFile) async -> Bool {
+        if await target.file.url == file.url { return true }
+        do {
+            try await target.repoint(to: file)
+            return true
+        } catch {
+            log("voices repoint refused itag=\(file.itag) error=\(error)")
+            return false
+        }
+    }
+
+    /// A recovery found no copy of the playing audio file: open the replacement and restart the
+    /// voices at the playhead (a hold, like the Remove-music switch). The picture is untouched.
+    private func switchAudio(to source: FMP4Source, fetcher replacement: MediaFetcher) async {
+        let position = synchronizer.currentTime().seconds
+        do {
+            let opened = try await FMP4Reader.open(replacement, initRange: source.initRange, indexRange: source.indexRange)
+            guard let newTrack = opened.track(.audio) else { throw AACDecoderError("no audio track") }
+            let decoder = try AACDecoder(track: newTrack)
+            if let current = track, current.sampleRate != newTrack.sampleRate || current.channels != newTrack.channels {
+                try await stage.configure(sampleRate: decoder.sampleRate, channels: decoder.channels)
+            }
+            guard !closed else { return }
+            audio = source
+            fetcher = replacement
+            header = opened
+            track = newTrack
+            audioCache = SegmentCache(capacity: configuration.audioCacheBytes)
+            log("voices switch-audio itag=\(source.file.itag) at=\(Self.format(position))")
+            await restart(at: position, reason: .seek, passThrough: nil, video: false)
+        } catch {
+            fail(error)
+        }
+    }
+
+    private func noteServed(_ segment: FMP4Segments.Segment, index: FMP4SegmentIndex) {
+        // A request start, or the opening segment that came with the header request (stream 0).
+        guard segment.requestStart || (segment.index == 0 && servedLowMs < 0) else { return }
+        let ms = Int64(index.seconds(segment.reference.startTime) * 1000)
+        servedLowMs = servedLowMs < 0 ? ms : min(servedLowMs, ms)
+        servedHighMs = max(servedHighMs, ms)
+    }
+
+    /// The stream position (ms) of the segment holding `byte` in `track`'s file.
+    private func positionMs(_ track: MediaRefusal.Track, byte: Int64) -> Int64 {
+        guard let index = (track == .audio ? header : videoHeader)?.index,
+              let reference = index.references.first(where: { $0.bytes.contains(byte) || $0.bytes.lowerBound >= byte }) else { return 0 }
+        return Int64(index.seconds(reference.startTime) * 1000)
+    }
+
+    private func armSyntheticWall(_ fetcher: MediaFetcher, header: FMP4Header, at seconds: Double, label: String) async {
+        guard let reference = header.index.references.first(where: { header.index.seconds($0.startTime) >= seconds }) else { return }
+        await fetcher.setSyntheticRefusal(fromByte: reference.bytes.lowerBound)
+        log("voices synthetic-wall track=\(label) at=\(Self.format(header.index.seconds(reference.startTime))) byte=\(reference.bytes.lowerBound)")
     }
 
     // MARK: Renderer readiness

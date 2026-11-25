@@ -40,8 +40,13 @@ final class WatchDebug {
     /// Plays the voices without the picture (US-012's mode).
     var audioOnly = false
 
+    /// Debug (US-017): the first answer's links refuse past 60 s of stream (`--synthetic-wall`).
+    var syntheticWall = ProcessInfo.processInfo.arguments.contains("--synthetic-wall")
+        || ProcessInfo.processInfo.arguments.contains("--wall-check")
+
     @ObservationIgnored private let models: ModelStore
     @ObservationIgnored private var engine: PlayerEngine?
+    @ObservationIgnored private var playing: PlayingFiles?
     @ObservationIgnored private var poll: Task<Void, Never>?
     @ObservationIgnored private var tapAt: ContinuousClock.Instant?
     @ObservationIgnored private var playerMs = 0
@@ -114,7 +119,7 @@ final class WatchDebug {
         tapAt = .now
         AppLog.player.info("voices tap video=\(videoID) at=\(seconds) removeMusic=\(removeMusic) audioOnly=\(audioOnly)")
         do {
-            let media = try await VideoResolver.media(for: videoID, withVideo: !audioOnly)
+            let media = try await VideoResolver.media(for: videoID, withVideo: !audioOnly, synthetic: syntheticWall)
             guard token == generation else { return }
             title = media.title
             qualities = media.videoOptions
@@ -136,9 +141,16 @@ final class WatchDebug {
             }
             var configuration = PlayerEngine.Configuration()
             configuration.audioDelay = media.audioDelay
+            if syntheticWall { configuration.syntheticWallSeconds = 60 }
+            let playing = PlayingFiles(media)
+            self.playing = playing
+            let synthetic = syntheticWall
             let engine = PlayerEngine(
                 audio: media.audio, fetcher: Self.fetcher(media.audio),
                 stage: SeparatorStage(separator: separator), video: video, configuration: configuration,
+                recover: { refusal in
+                    await VideoResolver.recover(videoID: videoID, playing: playing, refusal: refusal, synthetic: synthetic)
+                },
                 log: { AppLog.player.info($0 + " appState=\(AppActivity.logValue)") },
                 holdLog: { AppLog.musicless.info($0) },
                 onChange: { [weak self] snapshot in Task { @MainActor in self?.changed(snapshot) } })
@@ -186,6 +198,7 @@ final class WatchDebug {
         AppLog.player.info("voices quality=\(option.label) itag=\(option.itag)")
         do {
             try await engine.switchVideo(to: option.source, fetcher: Self.fetcher(option.source))
+            await playing?.video(option.source.file)
         } catch {
             AppLog.player.info("voices quality failed error=\(error)")
         }
@@ -258,6 +271,37 @@ final class WatchDebug {
         AppLog.player.info("background-test done")
     }
 
+    /// US-017's synthetic-wall check (`--wall-check`): 4 videos, each from 0:50 with its first
+    /// answer's links refusing past 60 s of stream. A round passes when playback reaches 1:15 with no
+    /// failure and no rewind (the position never goes back more than 0.2 s).
+    func runWallCheck() async {
+        var passed = 0
+        for (round, preset) in Self.presets.enumerated() {
+            await play(preset.id, at: 50)
+            let start = ContinuousClock.now
+            var highest = 0.0, rewind = false, result = "timeout"
+            while ContinuousClock.now - start < .seconds(75) {
+                try? await Task.sleep(for: .milliseconds(100))
+                guard let snapshot else { continue }
+                if case .failed = snapshot.status {
+                    result = "failed"
+                    break
+                }
+                if snapshot.position < highest - 0.2 { rewind = true }
+                highest = max(highest, snapshot.position)
+                if snapshot.position >= 75 {
+                    result = rewind ? "rewind" : "ok"
+                    break
+                }
+            }
+            if result == "ok" { passed += 1 }
+            AppLog.player.info("wall-check round=\(round + 1) video=\(preset.id) result=\(result) highest=\(String(format: "%.1f", highest)) "
+                               + "rewind=\(rewind ? "y" : "n") error=\(error ?? "none")")
+        }
+        await stop(reason: "wall-check done")
+        AppLog.player.info("wall-check done passed=\(passed)/\(Self.presets.count)")
+    }
+
     /// `--quality-check`: after 8 s of playback, step through every quality, 8 s each.
     func runQualityCheck() async {
         while snapshot?.status != .playing { try? await Task.sleep(for: .milliseconds(200)) }
@@ -298,6 +342,7 @@ struct WatchDebugView: View {
     var seekCheck = false
     var backgroundTest = false
     var qualityCheck = false
+    var wallCheck = false
     @State private var link = ""
     /// The seek bar's value while it is being dragged; nil otherwise.
     @State private var scrub: Double?
@@ -332,9 +377,13 @@ struct WatchDebugView: View {
                     Toggle("Remove music", isOn: Binding(get: { watch.removeMusic },
                                                          set: { on in Task { await watch.setRemoveMusic(on) } }))
                     if !watch.qualities.isEmpty {
-                        Picker("Quality", selection: Binding(get: { watch.quality ?? watch.qualities[0] },
-                                                             set: { option in Task { await watch.setQuality(option) } })) {
-                            ForEach(watch.qualities) { option in Text(option.label).tag(option) }
+                        // Selected by itag: SwiftUI may read the binding once more after `stop()` empties the list.
+                        Picker("Quality", selection: Binding(get: { watch.quality?.itag ?? watch.qualities.first?.itag ?? 0 },
+                                                             set: { itag in
+                                                                 guard let option = watch.qualities.first(where: { $0.itag == itag }) else { return }
+                                                                 Task { await watch.setQuality(option) }
+                                                             })) {
+                            ForEach(watch.qualities) { option in Text(option.label).tag(option.itag) }
                         }
                     }
                 }
@@ -359,11 +408,16 @@ struct WatchDebugView: View {
             Section("Debug") {
                 ModelStatusRow()
                 Toggle("Audio only", isOn: Binding(get: { watch.audioOnly }, set: { watch.audioOnly = $0 }))
+                Toggle("Synthetic wall at 1:00", isOn: Binding(get: { watch.syntheticWall }, set: { watch.syntheticWall = $0 }))
             }
         }
         .navigationTitle("Watch (debug)")
         .navigationBarTitleDisplayMode(.inline)
         .task {
+            if wallCheck {
+                await watch.runWallCheck()
+                return
+            }
             guard let autoPlay else { return }
             await watch.play(autoPlay.id, at: autoPlay.at)
             if seekCheck {
