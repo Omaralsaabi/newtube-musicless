@@ -7,11 +7,15 @@ import YouTubeEngine
 struct RootView: View {
     @Environment(ModelStore.self) private var models
     @State private var path: [Route] = []
+    /// The Voices-only screen's player; it outlives the view and stops when the route is popped.
+    @State private var voices: VoicesCheck?
 
     enum Route: Hashable {
         case probe
         /// autoStart: true = locked run, false = foreground run, nil = wait for a tap.
         case benchmark(autoStart: Bool?)
+        /// US-012; `id` plays at once (from `--voices`).
+        case voices(id: String?, at: Double)
     }
 
     var body: some View {
@@ -39,6 +43,9 @@ struct RootView: View {
                     NavigationLink(value: Route.benchmark(autoStart: nil)) {
                         Label("Separation benchmark", systemImage: "speedometer")
                     }
+                    NavigationLink(value: Route.voices(id: nil, at: 0)) {
+                        Label("Voices only", systemImage: "person.wave.2")
+                    }
                     ModelStatusRow()
                 }
             }
@@ -48,10 +55,13 @@ struct RootView: View {
                 case .probe: DeviceProbeView()
                 case .benchmark(let autoStart):
                     BenchmarkView(benchmark: SeparationBenchmark(models: models), autoStart: autoStart)
+                case .voices(let id, let at):
+                    if let voices { VoicesCheckView(check: voices, autoPlay: id.map { ($0, at) }) }
                 }
             }
         }
         .onAppear {
+            if voices == nil { voices = VoicesCheck(models: models) }
             AppLog.probe.info("launch version=\(BuildInfo.version) build=\(BuildInfo.build) commit=\(BuildInfo.commit)")
             // `--run-probe` opens the probe at launch, so it can be captured without touching the phone:
             // xcrun devicectl device process launch --device "$DEVICE_ID" --console <bundle id> --run-probe
@@ -69,10 +79,21 @@ struct RootView: View {
             if arguments.contains("--resolve-check") { Task { await PlayerCheckRunner.runUS009(record: false) } }
             if arguments.contains("--record-answers") { Task { await PlayerCheckRunner.runUS009(record: true) } }
             if arguments.contains("--fetch-check") { Task { await FetchCheckRunner.run() } }
+            // `--voices [<id>] [--voices-at <seconds>]` plays a video's voices at launch (US-012).
+            if path.isEmpty, let index = arguments.firstIndex(of: "--voices") {
+                let next = arguments.indices.contains(index + 1) ? arguments[index + 1] : ""
+                let id = next.hasPrefix("--") || next.isEmpty ? VoicesCheck.presets[0].id : next
+                let at = arguments.firstIndex(of: "--voices-at").flatMap { arguments.indices.contains($0 + 1) ? Double(arguments[$0 + 1]) : nil }
+                path = [.voices(id: id, at: at ?? 0)]
+            }
             if arguments.contains("--record-media") { Task { await MediaRecorder.run() } }
             AppLog.musicless.info("Model status \(models.status.logValue)")
             // `--download-models` starts the voice-model download at launch (no auto-start yet: D25).
             if ProcessInfo.processInfo.arguments.contains("--download-models") { models.start() }
+        }
+        .onChange(of: path) { _, path in
+            let showsVoices = path.contains { if case .voices = $0 { true } else { false } }
+            if !showsVoices, let voices, voices.isActive { Task { await voices.stop(reason: "left the screen") } }
         }
         .onChange(of: models.status) { _, status in
             AppLog.musicless.info("Model status \(status.logValue)")

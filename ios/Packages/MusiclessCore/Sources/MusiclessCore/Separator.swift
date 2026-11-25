@@ -80,6 +80,19 @@ public actor Separator {
     private var ended = false
     public private(set) var failureMessage: String?
 
+    /// Android's hold fields (`MusiclessAudioProcessor.inputReadyNs`, `queueMs`, `waitModelMs`,
+    /// `inferMs`): what the player's `hold reason=…` line reports.
+    public struct HoldStats: Sendable, Equatable {
+        /// When the first window after `beginHold()` was submitted; nil while input is still missing.
+        public var inputReadyAt: ContinuousClock.Instant?
+        public var queueMs = 0
+        public var waitModelMs = 0
+        public var inferMs = 0
+
+        public init() {}
+    }
+    public private(set) var holdStats = HoldStats()
+
     private var capacityWaiters: [CheckedContinuation<Void, Never>] = []
     private var chunkWaiter: CheckedContinuation<Chunk?, Never>?
 
@@ -112,16 +125,19 @@ public actor Separator {
 
     /// Adds interleaved samples in the configured format. Suspends while 2 windows are outstanding;
     /// returns early, dropping the rest, if a flush or close happens meanwhile (they belong to the
-    /// old position).
-    public func enqueue(_ samples: [Float]) async {
+    /// old position). With `generation`, samples sent for an older generation are dropped: a player
+    /// whose call races its own flush can't leak the old position into the new one.
+    public func enqueue(_ samples: [Float], generation expected: Int? = nil) async {
         precondition(configured, "configure(sampleRate:channels:) first")
+        if let expected, expected != generation { return }
         let stereo = converter.map { $0.convert(samples) } ?? samples
         await accept(stereo, generation: generation)
     }
 
     /// No more input until the next flush: the remaining samples go out as a short last window,
-    /// then an end-of-stream chunk.
-    public func endOfStream() async {
+    /// then an end-of-stream chunk. Ignored when `generation` is given and is not the current one.
+    public func endOfStream(generation expected: Int? = nil) async {
+        if let expected, expected != generation { return }
         let token = generation
         if let tail = converter?.drain(), !tail.isEmpty { await accept(tail, generation: token) }
         guard token == generation, !closed else { return }
@@ -132,7 +148,9 @@ public actor Separator {
 
     /// Drops everything queued or finished and restarts the window ramp at frame 0. Optionally
     /// switches pass-through (FR-5: toggling Remove music flushes at the current position).
-    public func flush(passThrough: Bool? = nil) {
+    /// Returns the new generation, which the chunks of the new position carry.
+    @discardableResult
+    public func flush(passThrough: Bool? = nil) -> Int {
         if let passThrough { self.passThrough = passThrough }
         generation += 1
         outstanding -= pending.count + ready.filter(\.countsAsOutstanding).count
@@ -150,6 +168,12 @@ public actor Separator {
         failureMessage = nil
         converter?.reset()
         resumeCapacityWaiters()
+        return generation
+    }
+
+    /// Android's `beginHold`: the player started waiting for voices; restart the hold timings.
+    public func beginHold() {
+        holdStats = HoldStats()
     }
 
     /// Ends this separator: releases the backend and wakes any waiting caller.
@@ -217,6 +241,7 @@ public actor Separator {
     }
 
     private func submit(outputFrames: Int) {
+        if holdStats.inputReadyAt == nil { holdStats.inputReadyAt = .now }
         let block = window == Self.fullWindow ? input : Array(input[0..<(window * 2)])
         var next = [Float](repeating: 0, count: Self.fullWindow * 2)
         next[0..<(Self.overlap * 2)] = block[(block.count - Self.overlap * 2)...]
@@ -265,6 +290,9 @@ public actor Separator {
             }
             let voices = crossfade(result.voices, outputFrames: job.outputFrames, generation: job.generation)
             let timings = result.timings
+            holdStats.queueMs = timings.queueMs
+            holdStats.waitModelMs = timings.waitModelMs
+            holdStats.inferMs = timings.pipelineMs
             log("Window pipeline ms=\(timings.pipelineMs) processor=\(id) generation=\(job.generation) "
                 + "window=\(job.number) frames=\(job.block.count / (2 * Dsp.hop)) outputStartFrame=\(job.outputStart) "
                 + "outputFrames=\(job.outputFrames) \(timings.logFields) backend=\(timings.backend)")

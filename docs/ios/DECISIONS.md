@@ -431,6 +431,100 @@ Personal Team test (Q8, D15) moves with them: there is still no paid-only capabi
   measured in US-013 with an A/V sync test video (limit 40 ms); a fixed trim is added only if the
   measurement asks for it.
 
+### D43. The audio-only player — US-012
+
+- **The chain, as built:** `VoicePlayer` (MediaPipeline, an actor on its own serial queue) reads the
+  file with `FMP4Reader` and decodes it with `AACDecoder`. It runs the PCM through a `VoiceStage`
+  (the Separator), turns the voices into LPCM `CMSampleBuffer`s, and plays them on an
+  `AVSampleBufferAudioRenderer` attached to an `AVSampleBufferRenderSynchronizer`.
+  - **FMP4Reader:** the first request takes the init range, the index range and the rest of the
+    first 256 KiB. The opening 10 s segment (≈ 160 KB) usually comes with them: one round trip
+    instead of three. After that it reads whole segments, in requests that double up to 2 MiB.
+  - **AACDecoder:** `AVAudioConverter`, streaming with "no data now" so its state carries across
+    segments. Its output keeps the track's own rate and channels; the Separator converts what isn't
+    44.1 kHz stereo, so nothing is resampled twice.
+  - **Sample buffers:** Float32 44.1 kHz stereo, 16,384 frames each (0.37 s).
+- **`VoiceStage` is a protocol in MediaPipeline,** so the package needs no ONNX Runtime and its tests
+  run the player with a fake stage. The app adapts the Separator to it (`SeparatorStage`). The
+  Separator gained:
+  - generation-checked `enqueue` and `endOfStream`, so a late call from an old position can't leak
+    into the new one (the order of two actors' calls isn't guaranteed);
+  - a `flush` that returns the new generation;
+  - Android's hold fields: `beginHold()` and `holdStats` (`inputReadyNs`, `queueMs`,
+    `waitModelMs`, `inferMs`).
+- **Bounded look-ahead:** a voice chunk is taken from the stage only once the previous one is in the
+  renderer. Memory holds one chunk (≤ 11.9 s) plus the stage's two windows. Android does the same:
+  it drains processor output only after the AudioTrack has taken the previous output.
+- **How the renderer behaves** (Mac probe, then the iPhone):
+  - It accepts ≈ 1.1 s before `isReadyForMoreMediaData` turns false, and keeps 1.7–2.1 s queued
+    while playing.
+  - When it runs dry, the synchronizer's clock keeps running, so late voices would be lost. That's
+    why a hold must set rate 0.
+- **Hold:**
+  - From a start or seek, rate 0 until the first voices are queued.
+  - Later, a hold when less than 0.25 s is queued and more is coming, debounced 100 ms
+    (`HoldDebounce`, ported with Android's test).
+  - **Differs from Android:** a slow network holds too (`reason=underrun`; `waitInputMs` shows the
+    wait for input), because nothing else stops this clock. On Android, ExoPlayer pauses for network
+    buffering on its own.
+  - The clock check sleeps until a hold could first be needed (queued time − 0.25 s): 2–4 wake-ups a
+    second. It checks every 25 ms while debouncing, and every 250 ms while held or paused.
+  - The `hold reason=start|seek|underrun waitInputMs=… queueMs=… waitModelMs=… inferMs=… totalMs=…`
+    line keeps Android's format.
+- **`delaysRateChangeUntilHasSufficientMediaData = false`:** our hold decides when the clock runs,
+  without an unmeasured extra wait. At first audio (1.11 s queued),
+  `hasSufficientMediaDataForReliablePlaybackStart` was already true anyway.
+- **Seek and the Remove-music switch** do the same restart:
+  - flush the renderer and the stage (switching pass-through);
+  - fetch from the target's segment;
+  - drop decoded frames before the target, so the voices start exactly there.
+  - **Known gap:** the restart fetches bytes it already had (≈ 0.5 MB on a switch, 9–49 ms on Wi-Fi).
+    A byte cache belongs to US-013, which measures seeks.
+- **Automatic renderer flush** (an output change): the buffers not yet played are kept and
+  re-enqueued from the flush time. A flush of our own goes first, which keeps them in order. This
+  hasn't happened on the device yet.
+- **Audio session:**
+  - `.playback` / `.moviePlayback`, activated on play.
+  - An interruption pauses playback and resumes it when iOS passes `shouldResume`.
+  - Losing the output device (headphones unplugged) pauses.
+  - Now Playing and remote commands are US-018.
+- **Logs** (besides the hold line):
+  - `voices chunk startS=… seconds=… inputDb=… voicesDb=…`: input and voices levels over the same
+    span, so the drop in level is measured, not guessed;
+  - `voices first-audio ms=…` (from `start`), `voices tap-to-first-audio ms=… playerMs=…`;
+  - `voices position=…` every 10 s;
+  - `appState=fg|bg` on these lines and on `Window pipeline`.
+- **Test harness:**
+  - the "Voices only" debug screen;
+  - `--voices [<id>] [--voices-at <s>]`;
+  - four presets: Big Buck Bunny (score, no speech), Sintel (dialogue over score), Kurzgesagt's
+    "The Egg" (narration over music), and Rick Astley (a song).
+  - US-014's watch screen replaces it.
+- **Measured on the iPhone** (home Wi-Fi, Debug build, 2026-11-25):
+  - **Tap to first voices:** 920–1,310 ms, against G2's 2.5 s. 362–532 ms of it is `/player`.
+  - **The start hold:** 487–638 ms: input 293–389 ms, model load 124–172 ms, first window 53 ms.
+  - **Switch holds:** 129–360 ms.
+  - **F=512 windows:** 268–347 ms in this unoptimised build; D34 measured 258 ms in Release.
+  - **After the start:** no hold while playing.
+  - **Output:** the hardware runs at 48 kHz, and the renderer resamples.
+- **Ear test** (the developer, on the iPhone): Big Buck Bunny with Remove music switched on and off
+  several times. Music was gone with it on and back with it off. Levels over the same spans: voices
+  10–34 dB below the input with it on, equal to it with it off. The score-only film keeps some animal
+  and bird sounds: the vocals model keeps voice-like sounds, which aren't music.
+- **Sintel's levels** (the lock run): its opening 33 s, score without dialogue, came out 40–59 dB below
+  the input, which is silence. Its dialogue (34–80 s) came out 9–15 dB below: the speech stays.
+- **Screen lock** (side button, 2026-11-25; Auto-Lock is off on this phone):
+  - Sintel locked at 22 s and stayed locked for about 45 s. Scene phase went inactive → background,
+    and the log carried `appState=bg`.
+  - The position kept advancing in real time (31 → 62 s), with 1.7–2.2 s queued. F=512 windows ran in
+    the background at 267–276 ms (thread CPU = wall time), with no hold.
+  - After unlocking, the same playback was still running.
+  - So the CPU and the network keep working while audio plays (PRD §4.5).
+- **The player outlives its screen:** RootView owns it and stops it when the screen's route is popped,
+  not in `onDisappear`, so a lock or a sheet can't stop it. Every stop logs
+  `voices stop reason=stop button|left the screen|new video`. Two early "lock" runs turned out to be
+  the developer stopping playback; the reason line now tells those apart.
+
 ## Settled `[verify]` items
 
 | PRD item | Result | Evidence |

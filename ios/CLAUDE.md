@@ -80,7 +80,11 @@ xcrun devicectl device process launch --device "$DEVICE_ID" --terminate-existing
   `--resolve-check` (US-009: 10 videos, one request each), `--fetch-check` (US-010: AAC files through
   MediaFetcher, first-chunk and fallback timing), `--record-media` (US-011: Big Buck Bunny init,
   index and two segments per file to Documents/media), `--record-answers` (fixture answers,
-  scrubbed, to Documents/answers; copy them off with `devicectl device copy from`).
+  scrubbed, to Documents/answers; copy them off with `devicectl device copy from`),
+  `--voices [<id>] [--voices-at <s>]` (US-012: the "Voices only" screen plays a video's voices;
+  default Big Buck Bunny. Its `voices chunk` lines compare input and voices dB over the same span).
+- The phone must be unlocked for `devicectl … launch` ("Locked" error otherwise). Killing a
+  `--console` launch terminates the app, so give captures a timer longer than the test.
 - Answer fixtures must go through `AnswerScrubber` (no visitor ids, no requester IP); the
   `fixturesCarryNoAddressOrVisitor` test re-checks every committed one.
 - googlevideo cache nodes can be unreachable on one network and fine on another (DECISIONS D39):

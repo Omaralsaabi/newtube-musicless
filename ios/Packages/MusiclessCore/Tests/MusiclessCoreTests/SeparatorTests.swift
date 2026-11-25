@@ -158,6 +158,45 @@ import Testing
         #expect(voices[middle] == voices[middle + 1], "mono is copied to both channels")
     }
 
+    @Test func inputForAnOlderGenerationIsDropped() async throws {
+        let backend = RecordingBackend()
+        let separator = Separator(backend: backend)
+        try await separator.configure(sampleRate: 44_100, channels: 2)
+        let old = await separator.generation
+        let fresh = await separator.flush()
+        #expect(fresh == old + 1)
+        let collector = Task { await Self.collect(separator) }
+        await separator.enqueue(Self.ramp(frames: 100_000, offset: 9), generation: old)  // a late call from the old position
+        await separator.endOfStream(generation: old)
+        let input = Self.ramp(frames: 70_000)
+        await separator.enqueue(input, generation: fresh)
+        await separator.endOfStream(generation: fresh)
+        let chunks = await collector.value
+        #expect(chunks.allSatisfy { $0.generation == fresh })
+        #expect(chunks.flatMap(\.voices).count == input.count, "only the current generation's samples come out")
+    }
+
+    @Test func holdStatsFollowAndroidsFields() async throws {
+        let backend = GatedBackend()
+        let separator = Separator(backend: backend)
+        try await separator.configure(sampleRate: 44_100, channels: 2)
+        await separator.beginHold()
+        #expect(await separator.holdStats.inputReadyAt == nil)
+        let before = ContinuousClock.now
+        let producer = Task { await separator.enqueue(Self.ramp(frames: 30_000)) }
+        await producer.value
+        #expect(await separator.holdStats.inputReadyAt == nil, "half a first window is not input ready")
+        await separator.enqueue(Self.ramp(frames: 40_000))
+        let ready = try #require(await separator.holdStats.inputReadyAt)
+        #expect(ready >= before)
+        await backend.open(count: 1)
+        _ = await separator.nextChunk()
+        await separator.beginHold()
+        #expect(await separator.holdStats == Separator.HoldStats())
+        await separator.close()
+        await backend.open(count: 100)
+    }
+
     // MARK: Helpers
 
     /// Interleaved stereo with distinct, smoothly varying channels.
