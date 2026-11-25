@@ -922,13 +922,13 @@ public class MobileBrowseActivity extends MobileActivity
         CastPickerLauncher.handlePermissionResult(this, requestCode, CastPickerLauncher::presentPlain);
     }
 
+    private static final int REQUEST_OPEN_FILE = 7301;
+
     /**
      * Settings entry point: the phone Settings screen (issue #2). Until 1.14 this rendered
      * AppDataSourceManager's TV categories through the AppDialog renderer; the tree now lives in
      * {@link com.newtube.mobile.ui.settings.SettingsPages}.
      */
-    private static final int REQUEST_OPEN_FILE = 7301;
-
     private void openSettings() {
         startActivity(com.newtube.mobile.ui.settings.MobileSettingsActivity.intent(this, null));
     }
