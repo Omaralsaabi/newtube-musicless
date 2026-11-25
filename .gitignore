@@ -92,3 +92,6 @@ ios/.models/
 ios/**/DerivedData
 ios/Packages/*/.build/
 ios/Packages/*/.swiftpm/
+ios/.vendor/
+ios/Packages/MusiclessCore/Vendor/
+ios/.fixtures/

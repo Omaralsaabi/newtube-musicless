@@ -83,7 +83,7 @@ enum DeviceProbe {
             ProbeRow(key: "physical memory", value: bytes(ProcessInfo.processInfo.physicalMemory)),
             ProbeRow(key: "os_proc_available_memory()",
                      value: available == 0 ? "0 (no memory limit reported; normal in the simulator)" : bytes(available)),
-            ProbeRow(key: "phys_footprint (this app now)", value: footprint().map(bytes) ?? "unavailable"),
+            ProbeRow(key: "phys_footprint (this app now)", value: ProcessMetrics.footprint().map(bytes) ?? "unavailable"),
         ])
     }
 
@@ -214,18 +214,6 @@ enum DeviceProbe {
         return withUnsafeBytes(of: &name.machine) { raw in
             String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
         }
-    }
-
-    /// The figure jetsam compares with the app's memory limit.
-    private static func footprint() -> UInt64? {
-        var info = task_vm_info_data_t()
-        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
-        let result = withUnsafeMutablePointer(to: &info) { pointer in
-            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
-            }
-        }
-        return result == KERN_SUCCESS ? info.phys_footprint : nil
     }
 
     private static func bareSessionStatus(_ codec: CMVideoCodecType) -> OSStatus {

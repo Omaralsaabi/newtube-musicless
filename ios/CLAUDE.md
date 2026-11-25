@@ -72,7 +72,21 @@ xcrun devicectl device process launch --device "$DEVICE_ID" --terminate-existing
 ```
 
 - Debug builds mirror every log line to stdout as `[<category>] …`, which is what `--console`
-  shows; OSLog alone never reaches it. Categories: `Musicless`, `NetPath`, `Player`, `Probe`.
+  shows; OSLog alone never reaches it (Release builds: add `--console-log`). Categories: `Musicless`,
+  `NetPath`, `Player`, `Probe`, `Benchmark`.
+- Launch flags: `--run-probe` (device probe), `--download-models`, `--benchmark` /
+  `--benchmark-locked` (US-006; time it in a **Release** build, `-configuration Release`).
+
+## Separation test data (all gitignored, rebuilt by scripts)
+
+```sh
+ios/tools/fetch_onnxruntime.sh        # ONNX Runtime from NuGet -> Packages/MusiclessCore/Vendor (bootstrap runs it)
+MUSICLESS_LIVE_MODELS=1 swift test --package-path ios/Packages/MusiclessCore --filter liveRelease  # -> ios/.models
+ios/tools/separation_fixture.sh       # Sintel clip + Python reference voices -> ios/.fixtures (needs ios/.models)
+ios/tools/dsp-golden/run.sh           # regenerate the committed DSP fixtures from the unchanged MusiclessDsp.java
+```
+Tests needing `ios/.models` or `ios/.fixtures` skip without them. The Swift DSP must stay within the
+golden tolerances, and the Separator within 35 dB SNR of `ios/tools/reference_two_models.py`.
 - `xcodebuild` refuses an existing `-resultBundlePath`; use a fresh name rather than deleting.
 - Every `devicectl` call prints "Failed to load provisioning paramter list … No provider was
   found." — harmless.

@@ -30,7 +30,8 @@ only on your own iPhone.
    ```sh
    ./bootstrap.sh
    ```
-   It checks Xcode and XcodeGen, creates `Config/Local.xcconfig`, and writes `Musicless.xcodeproj`.
+   It checks Xcode and XcodeGen, creates `Config/Local.xcconfig`, downloads ONNX Runtime (Microsoft's
+   NuGet package, 184 MB, once; it runs the voice models), and writes `Musicless.xcodeproj`.
 
 3. **Fill in `Config/Local.xcconfig`** (it stays on your Mac; git ignores it):
    - `DEVELOPMENT_TEAM`: your Team ID. In Xcode: Settings → Accounts → add your Apple ID → select
@@ -94,7 +95,8 @@ is the only way this project is offered.
 ## For developers
 
 - Packages test on the Mac: `swift test --package-path Packages/MusiclessCore` (also
-  `YouTubeEngine`, `MediaPipeline`).
+  `YouTubeEngine`, `MediaPipeline`). The separation tests that need the real models and a test clip
+  skip until you fetch them; see [`CLAUDE.md`](CLAUDE.md).
 - Rules for working on this code: [`CLAUDE.md`](CLAUDE.md). Decisions and their evidence:
   [`docs/ios/DECISIONS.md`](../docs/ios/DECISIONS.md).
 - Regenerating the app icon: `swift tools/render_app_icon.swift App/Resources/Assets.xcassets/AppIcon.appiconset/AppIcon.png`.

@@ -133,6 +133,169 @@ phone. The Mac's only other simulator belongs to another project. Its id is loca
 - Every `devicectl` command prints "Failed to load provisioning paramter list … No provider was
   found." It is harmless.
 
+## Phase 1
+
+### D23. DSP golden fixtures: integer-generated input, reduced F=512 — US-003
+
+- `ios/tools/dsp-golden/` compiles the **unchanged** `MusiclessDsp.java` with `DspGolden.java` (same
+  package) and writes little-endian float32 arrays plus `manifest.json` into MusiclessCore's test
+  resources (`run.sh`; JDK 17).
+- The input comes from integer arithmetic only (a sine table rounded to int16, phase accumulators,
+  xorshift32 noise), so Swift regenerates it **bit for bit**; the manifest's FNV-1a hash of the int16
+  stream proves it (the test fails if it ever drifts). The input itself isn't stored.
+- F=64: full spectrum, magnitude and synthesis output. F=512: frames {0, 1, 2, 255, 256, 509/510,
+  511, 512} and three output ranges, plus sum / sum of squares / max |x| over the full arrays. Full
+  F=512 fixtures would be ~20 MB; these total 2.3 MB.
+- The synthesis mask is `((c·7 + f·13 + k·31) mod 101) / 100`, exact in float in both languages.
+- **Measured** (tolerance = the PRD's): spectrum max error 1.3e-7 of the peak (≤ 1e-3), magnitude
+  2.2e-7 of the peak (≤ 1e-3), synthesis output 8.9e-8 absolute (≤ 1e-4), same at F=512. Float32
+  vDSP clears the PRD's `[verify]` tolerances by four orders of magnitude.
+
+### D24. The Swift DSP — US-003
+
+- vDSP's packed real FFT (`vDSP_fft_zrip`, log2n 12) in Float32. Its forward output is twice the DFT
+  (halved on store); fed true DFT values, its inverse returns the unnormalised IDFT, and Java's
+  `/ FFT` is folded into the synthesis window. The Nyquist bin (packed in `imag[0]`) is zero, as
+  Java zeroes bins ≥ 1024.
+- The gain sums Float squares in Double, as Java does. Interior frames gather and overlap-add with
+  strided vDSP calls; only the reflect-padded edge frames use scalar loops.
+- `Dsp` owns its scratch (not thread-safe; one per executor); results are arrays (copy-on-write).
+  The per-size setup (Hann² weights) is vectorised: it runs for every ramp window, on the path to the
+  first voices (debug build, first 512 window: 242 → 46 ms).
+- Mac (M4), release: analyze 4.3 ms + synthesize 4.4 ms for F=512, against 96 ms for the Java DSP.
+
+### D25. Model store: streaming download, own gunzip, no auto-start yet — US-004
+
+- Behaviour ported from `MusiclessModels.java`: `Range` resume; a 206 must carry
+  `Content-Range: bytes <offset>-`; a 416 on resume means the gzip is complete; a server that
+  ignores `Range` (200) restarts the file; 100 MB cap on the download and on each model; SHA-256
+  (CryptoKit) streamed with the gunzip; atomic publish as `<sha>-<name>` (`rename(2)`); the partial
+  file is deleted on any unpack or hash failure; errors read `Voice model: <message>`.
+- The body streams through a per-task `URLSessionDataDelegate` into an `AsyncThrowingStream`, so the
+  cap cancels mid-download. Gunzip: Apple's Compression `OutputFilter` (raw DEFLATE) after parsing the
+  RFC 1952 header ourselves; the trailer's CRC-32 isn't checked because the SHA-256 covers it.
+- Files live in Application Support/musicless, excluded from backup (directory and files; seen as
+  the `com_apple_backup_excludeItem` attribute on the simulator).
+- `ModelStore` is a main-actor `@Observable` (`notDownloaded`, `downloading(percent)`, `ready`,
+  `failed(message)`, `start`/`retry`, `awaitReady`).
+- **No download at launch yet.** Android starts it at launch when Remove music is on; here a debug
+  row (and `--download-models`) starts it until the Remove-music setting exists (US-014/US-024), so
+  a debug build doesn't spend 36 MB of someone's data unasked.
+- Verified with the real release: both files gunzip to the pinned hashes (Mac test `liveRelease`,
+  and in the app on the simulator).
+
+### D26. `MusiclessModelBaseURL` comes from xcconfig — US-004
+
+`Base.xcconfig` sets `MUSICLESS_MODEL_BASE_URL` (written `https:/$()/…` because xcconfig treats `//`
+as a comment); Info.plist reads it. Like Android's `musiclessModelBaseUrl` Gradle property, a builder
+can point it elsewhere in `Local.xcconfig`; empty means "not configured".
+
+### D27. ONNX Runtime 1.32.0 from Microsoft's NuGet package — US-005 (developer's decision)
+
+- **Why:** the PRD's `[verify]` URL is dead. `microsoft/onnxruntime-swift-package-manager` and
+  `microsoft/onnxruntime` return 404 on GitHub (pulled around 2026-11-17, per several mirrors), and
+  `download.onnxruntime.ai`, where the Swift package fetched its binary, fails TLS (certificate for
+  another host; checked with curl on 2026-11-25). Third-party mirrors exist; one of them carries a
+  re-tagged `1.24.2` that differs from the commit four others agree on (`b7fb7f7`). The developer
+  chose the official NuGet package over a mirror or skipping ORT.
+- **Source:** `Microsoft.ML.OnnxRuntime` 1.32.0 on nuget.org (published 2026-11-13), 184 MB,
+  SHA-256 `a9150bc2…5641db`. Its SHA-512 matches nuget.org's catalog; it carries Microsoft
+  Corporation's author signature and NuGet.org's repository signature (not cryptographically verified
+  here: that needs `dotnet nuget verify`).
+- **Assembly** (`ios/tools/fetch_onnxruntime.sh`, run by `bootstrap.sh`; output gitignored in
+  `Packages/MusiclessCore/Vendor/`): the package's `ios-arm64` and simulator frameworks (a static
+  library, CoreML execution provider included) plus a module map, and a `macos-arm64` framework
+  wrapping the package's osx-arm64 dylib for `swift test` on the Mac. That dylib's install name is
+  changed, so its Microsoft signature is stripped and it is signed ad hoc; it never ships.
+- The static library needs `libc++`, `libz`, `libsqlite3`, Core ML and UIKit (it reads `UIDevice`);
+  Package.swift links them (UIKit on iOS only).
+- Licences: the package's `LICENSE` and `ThirdPartyNotices.txt` are copied next to the xcframework for
+  About (US-024).
+
+### D28. ONNX Runtime through its C API — US-005
+
+NuGet ships no Objective-C wrapper, so `OnnxSession` calls the C API (`OrtApi`, version 32) directly.
+Session options match Android's: intra-op 2, inter-op 1, no CPU arena, no memory pattern,
+`session.intra_op.allow_spinning=0`, basic optimisation, free dimension `num_splits` = 1; telemetry
+off on the one process-wide environment. The CoreML execution provider gets `ModelFormat=MLProgram`,
+`MLComputeUnits` = `ALL` or `CPUAndNeuralEngine`, and a `ModelCacheDirectory` so compiles are reused.
+
+### D29. `ModelRuntime`: an actor on one serial queue — US-005
+
+The actor's executor is a `DispatchSerialQueue` ("Musicless-ORT"), the counterpart of Android's single
+model thread: loading, the whole window pipeline (DSP, both models, mask) and disposal run there, so
+`cpuMs` is one thread's CPU time as on Android. Only the 512-frame `Dsp` is kept; ramp sizes are built
+per use (Android's ~22 MB saving). Release after 120 s idle; a memory warning releases only when no
+player holds the runtime (iOS has no `TRIM_MEMORY_UI_HIDDEN`; "idle" is the PRD's rule).
+
+### D30. `Separator`: Android's grid behind an async API — US-005
+
+- `configure(sampleRate:channels:)`, `enqueue(_:) async`, `endOfStream() async`,
+  `flush(passThrough:)`, `close()`, and chunks pulled with `nextChunk()` (or `chunks`). Each chunk has
+  its generation, start frame, voices, and flags for silence and end of stream.
+- Backpressure: where Android's `queueInput` returns without consuming while 2 windows are
+  outstanding, `enqueue` suspends; a flush or close wakes it, and it drops the rest of its samples
+  (they belong to the old position).
+- A flush drops queued windows at once (Android skips them when the worker reaches them); the running
+  window keeps its slot until it returns and sees the new generation. Same bound, freed sooner.
+- Failure: everything received and not yet taken comes out as silence, further input too, with the
+  error in `failureMessage` and a log line; never the original audio. A flush clears it, as Android's
+  `onFlush` does.
+- Other rates and mono go through `AVAudioConverter` (PRD §4.3), with mono copied to both channels
+  (`channelMap [0, 0]`) instead of mixed down.
+- Every window logs Android's line: `Window pipeline ms=… processor=… generation=… window=… frames=…
+  outputStartFrame=… outputFrames=… queueMs=… waitModelMs=… analyzeMs=… vocalsMs=… accompanimentMs=…
+  maskMs=… synthesizeMs=… otherMs=… cpuMs=… backend=…`. `appState=` is the app's to append when
+  playback logs it (Phase 2).
+
+### D31. Backend names in logs — US-005
+
+`backend=ort-cpu`, `ort-coreml-all` or `ort-coreml-ane` (the PRD wrote `ort-coreml`): the two CoreML
+compute-unit settings behave differently enough (locked GPU failures) to need separate names.
+
+### D32. End-to-end fixture: the Sintel trailer, not committed — US-005
+
+- 30 s (15–45 s) of the Blender Foundation's Sintel trailer (CC BY 3.0), decoded once by `afconvert`.
+  `ios/tools/separation_fixture.sh` downloads it (SHA-256 pinned), cuts it and runs
+  `ios/tools/reference_two_models.py` (numpy + onnxruntime 1.32.0 from PyPI, in a venv under
+  `ios/.vendor`). Clip and reference (16 MB) live in gitignored `ios/.fixtures/`, like the models;
+  the licence, attribution and hashes are committed in `Tests/…/Fixtures/separation/LICENSE.md`.
+- The Swift test runs when the models and the fixture are present and skips otherwise.
+- **Measured: SNR 124.3 dB** against the Python reference on the Mac (max error 2.1e-6), 123.3 dB on
+  the iOS simulator. The PRD's 35 dB threshold is easily met.
+
+### D33. Benchmark method — US-006
+
+A deterministic tone-and-noise signal instead of a bundled clip: the models do the same arithmetic
+for any audio, and nothing has to be licensed or shipped. Timings come from a Release build (the
+debug build's Swift loops are unoptimised); `--console-log` mirrors its log to stdout. Windows run
+back to back (harder on thermals than playback, which waits ~12 s per window). The locked run waits
+for the app to be backgrounded, so Auto-Lock can do the locking unattended. Results:
+`docs/ios/BENCHMARKS.md`.
+
+### D34. D-backend: ONNX Runtime on the CPU — US-006 (closes Q1)
+
+ORT CPU: F=512 in 258 ms foreground and 264 ms locked (gate: 3,000 / 6,000 ms), first window 38 ms,
+load 131 ms, peak 116 MB, and numerically identical to the reference. The CoreML execution provider
+loads in 0.8–2.2 s, needs 284–1,827 ms for the first window of each shape and 450–570 MB, fails
+every locked inference with `ALL` (no background GPU), and its `CPUAndNeuralEngine` sessions show no
+sign of using the Neural Engine (thread CPU = wall time). **US-007 is skipped.** `InferenceBackend`
+stays switchable for a later energy comparison.
+
+### D35. Background audio and Files access now, not in Phases 2 and 5 — US-006
+
+The locked benchmark needs `UIBackgroundModes: audio` (PRD: Phase 2) and its CSV in Files needs
+`UIFileSharingEnabled` + `LSSupportsOpeningDocumentsInPlace` (PRD: Phase 5). Neither needs an
+entitlement, so free Apple IDs still sign the app.
+
+### D36. No Increased Memory Limit entitlement yet — US-006
+
+PRD §4.6 lists Increased Memory Limit and Extended Virtual Addressing for Phase 1. They aren't added:
+with ORT CPU, separation peaks at 116 MB while `os_proc_available_memory()` reports 2,088 MiB at
+launch (DEVICE-PROBE.md), so they would buy nothing and would make the app need a paid team. Revisit
+when playback (video + audio + separation, Phase 2) is measured against the 700 MB budget. The free
+Personal Team test (Q8, D15) moves with them: there is still no paid-only capability to test.
+
 ## Settled `[verify]` items
 
 | PRD item | Result | Evidence |
@@ -142,3 +305,10 @@ phone. The Mac's only other simulator belongs to another project. Its id is loca
 | §4.4: where the EJS solver bundle lives | `MediaServiceCore/youtubeapi/src/main/assets/nsigsolver/`: `yt.solver.core.js`, `meriyah-6.1.4.min.js`, `astring-1.9.0.min.js`, `polyfill.js`, `newtube.memo.js`; run by `app/nsigsolver/impl/V8ChallengeProvider.kt` | `find` |
 | §4.6: the background GPU resource on the A15 | **Not available**: `BGTaskScheduler.supportedResources` = 0. The `continued-processing.gpu` entitlement buys nothing on this phone; background separation stays CPU + Neural Engine (§4.5 already plans `.cpuAndNeuralEngine`). Measured without the entitlement and the `processing` mode; recheck once in Phase 5 | `DEVICE-PROBE.md` |
 | §0.3 row 10: string counts | Confirmed: `strings_mobile.xml` 373 en / 356 ar (plus 1 plural each). `strings_settings.xml`, which the PRD didn't count: 257 en / 255 ar | `grep -c '<string '` |
+| §4.3 / US-005: the ONNX Runtime Swift package URL and version | **False.** The repo and its binary host are gone (D27). Developer chose Microsoft's NuGet package, 1.32.0 | `gh api`, `git ls-remote`, curl TLS failure on `download.onnxruntime.ai`, nuget.org catalog (2026-11-25) |
+| US-003: tolerances achievable with Float32 vDSP | Yes, by ~4 orders of magnitude (D23) | `DspGoldenTests` |
+| US-005: SNR threshold 35 dB | Met: 124.3 dB (Mac), 123.3 dB (simulator) (D32) | `SeparationEndToEndTests` |
+| §4.3: "a few milliseconds with vDSP; the models dominate" | Yes: 12 ms of DSP in a 258 ms F=512 window on the A15 | `BENCHMARKS.md` |
+| §4.5: the GPU is unavailable in the background | Confirmed: CoreML `ALL` fails every locked inference (error -6) | `BENCHMARKS.md` |
+| §4.5: whether the Neural Engine keeps serving a locked-screen app | **Still open.** The `CPUAndNeuralEngine` sessions run locked at foreground speed, but probably on the CPU (thread CPU = wall time), so this says nothing about the Neural Engine. Irrelevant while ORT CPU is the backend | `BENCHMARKS.md` |
+| §4.3: Spleeter's U-Net is Neural-Engine-friendly | Not established, for the same reason; would need a static-shape Core ML model (US-007's route) | — |

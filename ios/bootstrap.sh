@@ -26,6 +26,9 @@ if ! grep -Eq '^[[:space:]]*DEVELOPMENT_TEAM[[:space:]]*=[[:space:]]*[A-Z0-9]{10
   printf 'bootstrap: note: DEVELOPMENT_TEAM is empty in Config/Local.xcconfig (fine for the simulator, required for a phone).\n'
 fi
 
+# ONNX Runtime (Microsoft's NuGet package, 184 MB once, cached in .vendor/): MusiclessCore links it.
+tools/fetch_onnxruntime.sh
+
 xcodegen generate --spec project.yml
 printf 'bootstrap: Xcode %s, XcodeGen %s. Open Musicless.xcodeproj, or build with xcodebuild (see README.md).\n' \
   "$xcode_version" "$(xcodegen --version | awk '{print $2}')"
