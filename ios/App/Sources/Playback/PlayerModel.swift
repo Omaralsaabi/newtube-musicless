@@ -64,6 +64,8 @@ final class PlayerModel: SystemPlaybackTarget {
     @ObservationIgnored private var playerMs = 0
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var observers: [any NSObjectProtocol] = []
+    /// The start ping went for this video.
+    @ObservationIgnored private var historyStarted = false
 
     init(models: ModelStore) {
         self.models = models
@@ -288,6 +290,11 @@ final class PlayerModel: SystemPlaybackTarget {
     func stop(reason: String) async {
         poll?.cancel()
         poll = nil
+        if let videoID, let snapshot, let length = snapshot.duration, snapshot.status != .ended, historyStarted {
+            let history = PlaybackServices.shared.history, position = snapshot.position
+            Task { await history.report(videoID: videoID, position: position, length: length, event: "stop") }
+        }
+        historyStarted = false
         if let engine {
             AppLog.player.info("voices stop reason=\(reason) appState=\(AppActivity.logValue)")
             self.engine = nil
@@ -305,7 +312,28 @@ final class PlayerModel: SystemPlaybackTarget {
         videoID = nil
     }
 
+    /// Watch history (US-022): start, pause and end, as VideoStateController.saveState sends them.
+    private func reportHistory(_ previous: PlayerEngine.Snapshot?, _ snapshot: PlayerEngine.Snapshot) {
+        guard let videoID, let length = snapshot.duration else { return }
+        let event: String?
+        if snapshot.status == .ended, previous?.status != .ended {
+            event = "end"
+        } else if snapshot.status == .playing, !historyStarted {
+            historyStarted = true
+            event = "start"
+        } else if previous?.wantsToPlay == true, !snapshot.wantsToPlay {
+            event = "pause"
+        } else {
+            event = nil
+        }
+        guard let event else { return }
+        let position = event == "end" ? length : snapshot.position
+        let history = PlaybackServices.shared.history
+        Task { await history.report(videoID: videoID, position: position, length: length, event: event) }
+    }
+
     private func changed(_ snapshot: PlayerEngine.Snapshot) {
+        reportHistory(self.snapshot, snapshot)
         self.snapshot = snapshot
         NowPlaying.shared.update(snapshot)
         pip?.invalidate()

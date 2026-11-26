@@ -25,8 +25,13 @@ final class PlaybackServices {
     /// The signature and n solver (US-016) and the player JS it solves with.
     let solver: ChallengeSolver
     let cipher: CipherResolver
-    /// Browse-shaped requests (search, channels, feeds) over the TV client, with the same visitor.
+    /// Browse-shaped requests (search, channels, feeds) over the TV client, with the same visitor
+    /// and, signed in, the account.
     let browse: BrowseClient
+    /// Sign-in (US-022): the device-code flow, the account's tokens, and watch history.
+    let oauth: OAuthClient
+    let tokens: AccountTokens
+    let history: HistoryReporter
     private var memoryObserver: (any NSObjectProtocol)?
 
     private init() {
@@ -44,7 +49,12 @@ final class PlaybackServices {
         solver = ChallengeSolver(cacheDirectory: players, log: { AppLog.netPath.info($0) })
         cipher = CipherResolver(solver: solver, scripts: PlayerScripts(transport: transport, directory: players))
         let visitor = identity
-        browse = BrowseClient(transport: transport, visitor: { try? await visitor.current().visitorData }, log: log)
+        oauth = OAuthClient(transport: transport, log: log)
+        let tokens = AccountTokens(oauth: oauth)
+        self.tokens = tokens
+        browse = BrowseClient(transport: transport, visitor: { try? await visitor.current().visitorData },
+                              authorization: { await tokens.authorization() }, log: log)
+        history = HistoryReporter(transport: transport, sources: sources, tokens: tokens)
         memoryObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main
         ) { _ in
@@ -239,11 +249,19 @@ enum VideoResolver {
         let visitor = try? await services.identity.current().visitorData
         // Sources walled for this visitor go last (US-017), in the order that asks ANDROID_VR late.
         let plan = await (synthetic ? services.syntheticWalls : services.walls).plan(videoID: videoID, recovery: false, appVisitor: visitor)
-        var context = SourcePlanner.Context(lane: .signedOut)
+        // Signed in: the signed-in lane, the account on the account route only (FR-17).
+        let account = await services.tokens.authorization()
+        var context = SourcePlanner.Context(lane: account == nil ? .signedOut : .signedIn)
         context.benched = plan.benched
         context.vodVrLate = !plan.benched.isEmpty
         let walk = await services.walker.walk(videoID: videoID, context: context) { client, budget in
-            await sources.attempt(client, videoID: videoID, budget: budget)
+            await sources.attempt(client, videoID: videoID, budget: budget,
+                                  authorization: client == SourcePlanner.accountRoute ? account : nil)
+        }
+        if account != nil, walk.client == SourcePlanner.accountRoute, let answer = walk.answer {
+            await services.history.noteAccountAnswer(videoID: videoID,
+                                                     tracking: WatchHistory.Tracking(videostatsURL: answer.videostatsPlaybackURL,
+                                                                                     cpn: answer.requestCPN ?? ""))
         }
         let walkMs = Int((ContinuousClock.now - start) / .milliseconds(1))
         AppLog.netPath.info("player-walk video=\(videoID) asked=\(walk.asked.map(\.id)) winner=\(walk.client?.id ?? "none") "
@@ -317,13 +335,15 @@ enum VideoResolver {
         }
         let visitor = try? await services.identity.current().visitorData
         let plan = await walls.plan(videoID: videoID, recovery: true, appVisitor: visitor)
-        var context = SourcePlanner.Context(lane: .signedOut, recoverySuspect: suspect)
+        let account = await services.tokens.authorization()
+        var context = SourcePlanner.Context(lane: account == nil ? .signedOut : .signedIn, recoverySuspect: suspect)
         context.benched = plan.benched
         context.refreshed = plan.refreshed
         context.vodVrLate = true
         let sources = services.sources
         let walk = await services.walker.walk(videoID: videoID, context: context) { client, budget in
-            await sources.attempt(client, videoID: videoID, budget: budget)
+            await sources.attempt(client, videoID: videoID, budget: budget,
+                                  authorization: client == SourcePlanner.accountRoute ? account : nil)
         }
         guard walk.playable, var answer = walk.answer, let winner = walk.client else {
             AppLog.netPath.info("wall-swap video=\(videoID) from=\(suspect.id) failed asked=\(walk.asked.map(\.id))")

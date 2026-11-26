@@ -49,6 +49,7 @@ public actor SourceWalker {
     public typealias Ask = @Sendable (ClientProfile, Duration) async -> WalkAttempt
 
     public static let walkBudget: Duration = .seconds(45)
+    static let accountRouteBudget: Duration = .seconds(15)
     static let minAttemptBudget: Duration = .milliseconds(1_500)
     static let transportDownStreak = 2
     static let circuitCooldown: Duration = .seconds(15 * 60)
@@ -185,8 +186,11 @@ public actor SourceWalker {
                 circuit?.nextProbe = now() + Self.circuitProbeInterval
             }
             // The refusal rule's TV_TIZEN is a speculative ask: the short budget.
+            // With the account (signed in) the account route gets Android's 15 s.
             let budget = anonTizenSpeculative && client == SourcePlanner.accountRoute
-                ? min(remaining, .seconds(7)) : min(client.attemptTimeout, remaining)
+                ? min(remaining, .seconds(7))
+                : lane == .signedIn && client == SourcePlanner.accountRoute ? min(Self.accountRouteBudget, remaining)
+                : min(client.attemptTimeout, remaining)
             let outcome = await ask(client, budget)
             let answer = outcome.answer
             let kind = answer.map(AnswerKind.init)

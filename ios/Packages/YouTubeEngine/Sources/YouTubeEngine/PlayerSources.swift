@@ -95,9 +95,22 @@ public struct PlayerSources: Sendable {
     public static let reelURL = URL(string: "https://youtubei.googleapis.com/youtubei/v1/reel/reel_item_watch")!
 
     /// One attempt, bounded by `budget` end to end (a source that hangs is a no-response).
-    public func attempt(_ client: ClientProfile, videoID: String, budget: Duration) async -> WalkAttempt {
+    /// History (LANES §3, `getAuthVideoInfo`): one TV 7.x /player with the account, for the pings'
+    /// account-bound tracking, when the winner was anonymous. Its formats are not used.
+    public func historyTracking(videoID: String, authorization: String) async -> WatchHistory.Tracking? {
+        guard case .answer(let answer) = await request(.tv, videoID: videoID, authorization: authorization) else {
+            log("history-tracking video=\(videoID) result=no-answer")
+            return nil
+        }
+        let tracking = WatchHistory.Tracking(videostatsURL: answer.videostatsPlaybackURL, cpn: answer.requestCPN ?? "")
+        log("history-tracking video=\(videoID) status=\(answer.playability.status) tracking=\(tracking == nil ? "missing" : "complete")")
+        return tracking
+    }
+
+    /// - authorization: the account (`Bearer …`), for the account route signed in only (FR-17).
+    public func attempt(_ client: ClientProfile, videoID: String, budget: Duration, authorization: String? = nil) async -> WalkAttempt {
         await withTaskGroup(of: WalkAttempt?.self) { group in
-            group.addTask { await self.request(client, videoID: videoID) }
+            group.addTask { await self.request(client, videoID: videoID, authorization: authorization) }
             group.addTask {
                 try? await Task.sleep(for: budget)
                 return nil
@@ -112,7 +125,7 @@ public struct PlayerSources: Sendable {
         }
     }
 
-    private func request(_ client: ClientProfile, videoID: String) async -> WalkAttempt {
+    private func request(_ client: ClientProfile, videoID: String, authorization: String?) async -> WalkAttempt {
         var visitorData: String?
         var flags: String?
         if client.isEmbedded {
@@ -128,6 +141,11 @@ public struct PlayerSources: Sendable {
                                      acceptLanguage: locale.language, acceptRegion: locale.region,
                                      utcOffsetMinutes: locale.utcOffsetMinutes, encryptedHostFlags: flags)
         var request = InnerTubeTransport.playerRequest(body)
+        // The account goes on TV requests only (FR-17): web clients refuse it, app clients ignore it.
+        if let authorization, client == SourcePlanner.accountRoute || client == .tv {
+            request.setValue(authorization, forHTTPHeaderField: "Authorization")
+            request.timeoutInterval = 15
+        }
         if client == .androidReel {
             request.url = Self.reelURL
             request.setValue(nil, forHTTPHeaderField: "Origin")  // VideoInfoApi.getVideoInfoReel sends none
@@ -142,7 +160,8 @@ public struct PlayerSources: Sendable {
                       let unwrapped = try? JSONSerialization.data(withJSONObject: player) else { return .failed("no playerResponse") }
                 data = unwrapped
             }
-            let answer = try PlayerAnswer(json: data)
+            var answer = try PlayerAnswer(json: data)
+            answer.requestCPN = body.cpn
             if client.isEmbedded, answer.playability.text?.contains("152") == true { await embed.invalidate() }
             return .answer(answer)
         } catch let error as URLError where [.timedOut, .cannotConnectToHost, .networkConnectionLost, .notConnectedToInternet,

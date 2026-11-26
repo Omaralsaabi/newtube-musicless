@@ -21,12 +21,16 @@ public struct BrowseClient: Sendable {
     private let transport: InnerTubeTransport
     private let visitor: @Sendable () async -> String?
     private let locale: @Sendable () -> RequestLocale
+    /// Signed in: the account (`Bearer …`). TV-shaped browse requests may carry it (FR-17).
+    private let authorization: @Sendable () async -> String?
     let log: @Sendable (String) -> Void
 
     public init(transport: InnerTubeTransport, visitor: @escaping @Sendable () async -> String?,
+                authorization: @escaping @Sendable () async -> String? = { nil },
                 locale: @escaping @Sendable () -> RequestLocale = { .current }, log: @escaping @Sendable (String) -> Void = { _ in }) {
         self.transport = transport
         self.visitor = visitor
+        self.authorization = authorization
         self.locale = locale
         self.log = log
     }
@@ -67,9 +71,14 @@ public struct BrowseClient: Sendable {
 
     /// One POST, retried once on a transport error or a 5xx (SearchService2 retries with a cloned
     /// call). A 4xx is an answer, not retried.
-    func post(_ endpoint: String, _ fields: [String: String]) async throws -> Data {
+    func post(_ endpoint: String, _ fields: [String: String], extra: [String: Any] = [:], signedIn: Bool = false) async throws -> Data {
         let visitorData = await visitor()
-        let request = Self.request(endpoint, fields: fields, visitorData: visitorData, locale: locale())
+        var request = Self.request(endpoint, fields: fields, visitorData: visitorData, locale: locale(), extra: extra)
+        if let authorization = await authorization() {
+            request.setValue(authorization, forHTTPHeaderField: "Authorization")
+        } else if signedIn {
+            throw BrowseError("signed out")
+        }
         var lastError: any Error = BrowseError("no attempt")
         for attempt in 1...2 {
             do {
@@ -85,12 +94,13 @@ public struct BrowseClient: Sendable {
         throw lastError
     }
 
-    public static func request(_ endpoint: String, fields: [String: String], visitorData: String?, locale: RequestLocale) -> URLRequest {
+    public static func request(_ endpoint: String, fields: [String: String], visitorData: String?, locale: RequestLocale,
+                               extra: [String: Any] = [:]) -> URLRequest {
         let client = ClientProfile.tv
         var request = URLRequest(url: URL(string: "https://www.youtube.com/youtubei/v1/\(endpoint)?prettyPrint=false")!,
                                  timeoutInterval: 20)
         request.httpMethod = "POST"
-        request.httpBody = body(fields: fields, visitorData: visitorData, locale: locale)
+        request.httpBody = body(fields: fields, visitorData: visitorData, locale: locale, extra: extra)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("https://www.youtube.com", forHTTPHeaderField: "Origin")
         request.setValue("https://www.youtube.com/tv", forHTTPHeaderField: "Referer")
@@ -102,7 +112,7 @@ public struct BrowseClient: Sendable {
     }
 
     /// JSON_POST_DATA_BASE for AppClient.TV's browse template, plus the request's own fields.
-    static func body(fields: [String: String], visitorData: String?, locale: RequestLocale) -> Data {
+    static func body(fields: [String: String], visitorData: String?, locale: RequestLocale, extra: [String: Any] = [:]) -> Data {
         let client = ClientProfile.tv
         var clientFields: [String: Any] = [
             "clientName": client.clientName, "clientVersion": client.clientVersion, "clientScreen": client.clientScreen,
@@ -117,6 +127,7 @@ public struct BrowseClient: Sendable {
             "racyCheckOk": true, "contentCheckOk": true,
         ]
         for (key, value) in fields { root[key] = value }
+        for (key, value) in extra { root[key] = value }
         return (try? JSONSerialization.data(withJSONObject: root, options: [.sortedKeys])) ?? Data()
     }
 

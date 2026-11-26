@@ -993,6 +993,56 @@ Personal Team test (Q8, D15) moves with them: there is still no paid-only capabi
   the playlist 216 ms (15 videos and a continuation), both over HTTP/3.
 - New launch flags: `--channel <id>` and `--playlist <id>`.
 
+### D53. Sign-in, the signed-in lane, watch history — US-022
+
+- **The device-code flow** ports AuthService V2 and AuthApiHelper:
+  - **Client id and secret:** fetched at sign-in from the youtube.com/tv app's base script, never
+    built in. The Cobalt page links it as `.src = '…m=base'` (AppInfo's second pattern), and
+    ClientData's regex takes the first `clientId:"…apps.googleusercontent.com",x:"secret"`.
+  - **Code:** `/o/oauth2/device/code` with the TV scope, model `ytlr::` and a per-install device id.
+  - **Polling:** `/o/oauth2/token` every `interval` (5 s), plus 5 s on `slow_down`. A network error
+    while the user is away in Safari is retried: the code stays valid (AuthService's note).
+  - **Refresh:** access tokens are refreshed 60 s before they expire, one refresh at a time.
+    `invalid_grant` signs out.
+- **The sheet** follows Android's MobileSignInActivity and YTSignInPresenter:
+  - the code, Copy, "Continue with Google" (the code-prefilled `youtube.com/qr/activate/<code>` in
+    Safari inside the app), and yt.be/activate as the manual way;
+  - the sheet and Safari close once the token arrives.
+
+  The PRD named yt.be/activate alone; Android leads with the prefilled page, and so does iOS.
+- **Secrets stay in the Keychain only:** the refresh token and the client it was minted for
+  (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, so a locked phone can refresh, and nothing
+  syncs or backs up).
+  - The account's name and photo are cached in UserDefaults for the next launch, without the
+    e-mail.
+  - No token, code, client id or secret is logged: the transport logs the path and status only.
+- **FR-17:** the account goes only on:
+  - the account route (TV_TIZEN, signed-in lane);
+  - the history /player (`ClientProfile.tv`);
+  - TV-shaped browse requests;
+  - the stats pings (Android's interceptor sends it there too).
+
+  `PlayerSources` drops it for any other client.
+- **The signed-in lane** (planner already ported, US-015): VISIONOS first, then TV_TIZEN **with the
+  account** on Android's 15 s budget (`accountRouteBudget`); recoveries too. A test pins the order
+  and the budget.
+- **Account row:** `accounts_list` (AccountsList/AccountInt), the selected account or the first, on
+  the You tab with Sign out (after a confirmation).
+- **Watch history** (LANES §3, TrackingService, VideoStateController.saveState):
+  - **When:** pings go at playback start, pause, end (fully watched) and stop, at a position of at
+    least 3 s.
+  - **Tracking:** their `ei`, `vm` and `of` come from an answer asked with the account, with that
+    request's CPN (`PlayerAnswer.requestCPN`). That's the account route's answer when it won,
+    otherwise one TV 7.x `/player` with the account (`historyTracking`), up to 3 tries per video.
+  - **Rules** (`WatchHistory`): a new record under 3 min starts from 0; a record renews after
+    30 min; the last 5 % marks the video fully watched.
+- **Checked here:** the flow up to polling, on the simulator and the iPhone (client data
+  268 + 51 ms, a code with 1,800 s and a 5 s interval, polls answering `authorization_pending`).
+- **The user's to check:** completing sign-in (it needs a Google account), the signed-in lane's
+  TV_TIZEN with the account, the history pings' status, and whether YouTube credits them (LANES §3
+  calls that the owner's check).
+- New launch flag: `--sign-in` opens the sheet.
+
 ## Settled `[verify]` items
 
 | PRD item | Result | Evidence |

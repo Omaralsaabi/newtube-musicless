@@ -89,6 +89,11 @@ public struct PlayerAnswer: Sendable {
     public var dashManifestURL: String?
     /// SABR's endpoint; formats without URLs plus this = a SABR-only answer.
     public var serverAbrStreamingURL: String?
+    /// `playbackTracking.videostatsPlaybackUrl.baseUrl`: its `ei`, `vm` and `of` go on the history
+    /// pings (VideoInfo / MediaItemFormatInfoImpl), bound to the identity that asked.
+    public var videostatsPlaybackURL: String?
+    /// The client playback nonce its request carried (set by PlayerSources; the history pings send it).
+    public var requestCPN: String?
 
     public init(json data: Data) throws {
         let raw = try JSONDecoder().decode(Raw.self, from: data)
@@ -114,6 +119,7 @@ public struct PlayerAnswer: Sendable {
         hlsManifestURL = raw.streamingData?.hlsManifestUrl
         dashManifestURL = raw.streamingData?.dashManifestUrl
         serverAbrStreamingURL = raw.streamingData?.serverAbrStreamingUrl
+        videostatsPlaybackURL = raw.playbackTracking?.videostatsPlaybackUrl?.baseUrl
     }
 
     public var isLive: Bool { details?.isLive ?? false }
@@ -133,6 +139,12 @@ private struct Raw: Decodable {
     var playabilityStatus: RawPlayability?
     var videoDetails: RawDetails?
     var streamingData: RawStreaming?
+    var playbackTracking: RawTracking?
+}
+
+private struct RawTracking: Decodable {
+    struct URLHolder: Decodable { var baseUrl: String? }
+    var videostatsPlaybackUrl: URLHolder?
 }
 
 private struct RawPlayability: Decodable {

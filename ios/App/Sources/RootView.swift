@@ -80,6 +80,9 @@ struct RootView: View {
                     }
                     .padding(.vertical, 4)
                 }
+                Section("Account") {
+                    AccountRow(account: AccountModel.shared)
+                }
                 Section("Debug") {
                     NavigationLink(value: Route.probe) {
                         Label("Device probe", systemImage: "cpu")
@@ -198,7 +201,7 @@ struct RootView: View {
             tab = .search
             searchPath = [.watch(videoID: arguments[index + 1])]
         }
-        if !path.isEmpty { tab = .you }
+        if !path.isEmpty || arguments.contains("--sign-in") { tab = .you }
     }
 }
 

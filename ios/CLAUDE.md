@@ -103,6 +103,9 @@ xcrun devicectl device process launch --device "$DEVICE_ID" --terminate-existing
   launch without saving the setting. The player is `Playback/PlayerModel.swift`, shared with the
   debug watch screen (its checks: `Debug/PlayerChecks.swift`). `--channel <id>` and `--playlist <id>`
   (US-021) open those pages.
+- `--sign-in` (US-022) opens the sign-in sheet. The account lives in the Keychain only
+  (`App/Sources/Account/`); its lines are `oauth …`, `account …`, `history-tracking …` and
+  `history-ping …`, and none of them may ever print a token, code, client id or secret.
 - `/player` goes through `SourceWalker` (US-015, the signed-out lane of Android's walk) and ciphered
   winners through `CipherResolver` (US-016). `WalkReplayTests` replays Android's device walks;
   `ios/tools/solver_oracle.sh` refreshes the solver fixture (needs node) when YouTube ships a new player.
