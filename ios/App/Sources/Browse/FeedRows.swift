@@ -51,6 +51,7 @@ struct FeedCard: View {
         }
         .contentShape(Rectangle())
         .contextMenu { if item.isPlayable, item.kind != .short { WatchLaterMenuItem(videoID: item.id) } }
+        .onAppear { if item.isPlayable { WatchProgress.shared.noteYouTube(videoID: item.id, percent: item.percentWatched) } }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
         .accessibilityAddTraits(.isButton)

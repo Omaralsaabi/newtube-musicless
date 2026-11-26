@@ -1354,6 +1354,27 @@ work resumes: US-031 and US-032 open videos through its `musicless://` link.
 - **Not done:** resuming playback where the bar says (Android does); a History entry's own menu
   (remove from history).
 
+### D63. Resume where the viewer left a video
+
+- **`ResumeRule`** (YouTubeEngine, with tests) ports Android's VideoStateController:
+  `restorePosition`, `isStateOutdated`, the reset in `resetPositionIfNeeded`, and Video's
+  `getPositionFromPercentWatched`.
+  - **Normally:** this phone's record (`WatchProgress`, D62).
+  - **YouTube's value instead** (signed in, from the card's red bar) when this phone has no
+    record, or when its record is older than the card and more than 3 points away. Only for
+    videos over 6 minutes, and only above 10 % and below 100 %.
+  - **From 0:** videos up to 6 minutes (Android's "remember the position of short videos" is off
+    by default, and iOS has no such setting yet), videos with less than 3 s left, and videos
+    with no record.
+- **When:** the watch page (and its Try again) asks the player to resume, using the answer's
+  `lengthSeconds`. A link's own `t=` and the debug screens still start where they say.
+- Cards note YouTube's value when they appear, keeping the first time a value was seen. The bar
+  uses the same rule, so it shows where the video will resume.
+- Log: `voices resume video=… at=… source=local|youtube|none [reset=short|ended] len=…`.
+  Simulator: Big Buck Bunny reopened at 15 s (`source=local`), first audio at 15.36 s.
+- Checked on the iPhone by the developer: a long video continues where it was left, a short one
+  starts over, and a long video half-watched on another device opens near that point.
+
 ## Settled `[verify]` items
 
 | PRD item | Result | Evidence |

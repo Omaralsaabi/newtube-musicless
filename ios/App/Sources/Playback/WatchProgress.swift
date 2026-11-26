@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import YouTubeEngine
 
 /// How far each video was watched in this app, for the red bar under its thumbnail (Android's
 /// VideoStateService, which fills in `percentWatched` where YouTube's card has none). Kept signed
@@ -15,6 +16,9 @@ final class WatchProgress {
     }
 
     private(set) var entries: [String: Entry] = [:]
+    /// YouTube's bars as cards showed them (signed in), and when a card first showed that value:
+    /// what this phone never played, or watched elsewhere since.
+    private var remote: [String: ResumeRule.Remote] = [:]
     @ObservationIgnored private let storeURL = URL.applicationSupportDirectory.appending(path: "watch-progress.json")
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     static let limit = 1_000
@@ -45,10 +49,29 @@ final class WatchProgress {
         return max(1, Int((share * 100).rounded()))
     }
 
-    /// The bar a card shows: this app's own record first (it's the newest thing the viewer did
-    /// here), else YouTube's (watched elsewhere, signed in).
+    /// The bar a card shows, by resume's rule: this app's own record, unless YouTube's value came
+    /// in after it and is more than 3 points away (watched elsewhere since); YouTube's when this
+    /// phone never played it.
     func barPercent(videoID: String, youtube: Int?) -> Int? {
-        percent(videoID) ?? youtube
+        guard let local = entries[videoID] else { return youtube }
+        if let youtube, let seen = remote[videoID], seen.percent == youtube, local.updated < seen.seenAt,
+           abs(local.position / local.length * 100 - Double(youtube)) > 3 {
+            return youtube
+        }
+        return percent(videoID)
+    }
+
+    /// A card with YouTube's bar came on screen. The first sighting of a value is kept, so a list
+    /// scrolled again doesn't make an old value look new.
+    func noteYouTube(videoID: String, percent: Int?) {
+        guard let percent, remote[videoID]?.percent != percent else { return }
+        remote[videoID] = ResumeRule.Remote(percent: percent, seenAt: Date())
+    }
+
+    /// Where `videoID` starts (ResumeRule, Android's VideoStateController).
+    func resume(videoID: String, length: Double?) -> ResumeRule.Decision {
+        let local = entries[videoID].map { ResumeRule.Local(position: $0.position, length: $0.length, updated: $0.updated) }
+        return ResumeRule.decide(length: length, local: local, remote: remote[videoID])
     }
 
     private func scheduleSave() {

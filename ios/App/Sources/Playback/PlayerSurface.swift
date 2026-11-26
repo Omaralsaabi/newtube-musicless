@@ -41,7 +41,7 @@ struct PlayerSurface: View {
                 Text("This video couldn't be played.").font(.subheadline.weight(.semibold))
                 Text(error).font(.caption2).foregroundStyle(.white.opacity(0.7)).multilineTextAlignment(.center).lineLimit(2)
                 if let videoID = player.videoID {
-                    Button("Try again") { Task { await player.play(videoID) } }.buttonStyle(.borderedProminent)
+                    Button("Try again") { Task { await player.play(videoID, resume: true) } }.buttonStyle(.borderedProminent)
                 }
             }
             .foregroundStyle(.white)

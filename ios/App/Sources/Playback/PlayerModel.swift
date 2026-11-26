@@ -153,7 +153,10 @@ final class PlayerModel: SystemPlaybackTarget {
         await play(link.videoID, at: link.startSeconds ?? 0)
     }
 
-    func play(_ videoID: String, at seconds: Double = 0) async {
+    /// - resume: start where the viewer left it (ResumeRule) instead of at `seconds`; the watch
+    ///   page asks for it, a link's own `t=` and the debug screens don't.
+    func play(_ videoID: String, at seconds: Double = 0, resume: Bool = false) async {
+        var seconds = seconds
         await stop(reason: "new video")
         generation += 1
         let token = generation
@@ -167,6 +170,12 @@ final class PlayerModel: SystemPlaybackTarget {
         do {
             let media = try await VideoResolver.media(for: videoID, withVideo: !audioOnly, synthetic: syntheticWall)
             guard token == generation else { return }
+            if resume {
+                let decision = WatchProgress.shared.resume(videoID: videoID, length: media.lengthSeconds)
+                seconds = decision.seconds
+                AppLog.player.info("voices resume video=\(videoID) at=\(Int(decision.seconds)) source=\(decision.source.rawValue)"
+                                   + (decision.reset.map { " reset=\($0)" } ?? "") + " len=\(Int(media.lengthSeconds ?? 0))")
+            }
             title = media.title
             qualities = media.videoOptions
             quality = media.videoOptions.first { $0.source.file.itag == media.video?.file.itag }

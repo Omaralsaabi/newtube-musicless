@@ -81,7 +81,7 @@ struct WatchView: View {
         .toolbar(player.fullScreen ? .hidden : .visible, for: .navigationBar)
         .task {
             // The page plays its own video; coming back to a page whose video still plays keeps it.
-            if player.videoID != model.videoID { await player.play(model.videoID) }
+            if player.videoID != model.videoID { await player.play(model.videoID, resume: true) }
         }
         .task { await model.load() }
         .fullScreenCover(isPresented: Binding(get: { player.fullScreen }, set: { player.fullScreen = $0 })) {

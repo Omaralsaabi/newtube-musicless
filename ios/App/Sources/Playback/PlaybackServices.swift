@@ -180,6 +180,8 @@ struct ResolvedMedia: Sendable {
     var audioItag: Int
     var videoItag: Int?
     var playerMs: Int
+    /// `videoDetails.lengthSeconds`, for resuming before the engine knows the duration.
+    var lengthSeconds: Double? = nil
 }
 
 /// One H.264 quality of a video, for the quality picker.
@@ -343,7 +345,8 @@ enum VideoResolver {
                              client: walk.client?.id ?? "?",
                              visitor: walk.client?.isEmbedded == true ? nil : visitor,
                              audioItag: audioFormat.itag, videoItag: withVideo ? selection.video?.itag : nil,
-                             playerMs: Int((ContinuousClock.now - start) / .milliseconds(1)))
+                             playerMs: Int((ContinuousClock.now - start) / .milliseconds(1)),
+                             lengthSeconds: answer.details?.lengthSeconds.map(Double.init))
     }
 
     /// A media 403's recovery (US-017; LANES §2.3, HANDOFF §34): the wall rule reads the refusal,
