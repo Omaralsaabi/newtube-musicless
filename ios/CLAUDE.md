@@ -95,6 +95,10 @@ xcrun devicectl device process launch --device "$DEVICE_ID" --terminate-existing
   handlers, the idle timer, full screen, then PiP by leaving for the Files app (bring the app back
   with `devicectl … process launch` without `--terminate-existing`); logs `system-check done passed=N/12`.
   The simulator has no PiP, so 11/12 is its best.
+- `--search [<query>]` (US-019): the Search tab, searching at once; `--search-more` then asks for two
+  more pages (the paging and top-up lines are `browse …`). `--rtl` forces right-to-left layout
+  (until Arabic is declared, US-025). Simulator screenshots go to `ios/build/screenshots/US-0NN/`
+  (gitignored) for the PR.
 - `/player` goes through `SourceWalker` (US-015, the signed-out lane of Android's walk) and ciphered
   winners through `CipherResolver` (US-016). `WalkReplayTests` replays Android's device walks;
   `ios/tools/solver_oracle.sh` refreshes the solver fixture (needs node) when YouTube ships a new player.

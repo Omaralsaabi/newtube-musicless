@@ -25,6 +25,8 @@ final class PlaybackServices {
     /// The signature and n solver (US-016) and the player JS it solves with.
     let solver: ChallengeSolver
     let cipher: CipherResolver
+    /// Browse-shaped requests (search, channels, feeds) over the TV client, with the same visitor.
+    let browse: BrowseClient
     private var memoryObserver: (any NSObjectProtocol)?
 
     private init() {
@@ -41,6 +43,8 @@ final class PlaybackServices {
         let players = URL.cachesDirectory.appending(path: "youtube/players", directoryHint: .isDirectory)
         solver = ChallengeSolver(cacheDirectory: players, log: { AppLog.netPath.info($0) })
         cipher = CipherResolver(solver: solver, scripts: PlayerScripts(transport: transport, directory: players))
+        let visitor = identity
+        browse = BrowseClient(transport: transport, visitor: { try? await visitor.current().visitorData }, log: log)
         memoryObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main
         ) { _ in

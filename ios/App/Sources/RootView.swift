@@ -3,12 +3,18 @@ import MusiclessCore
 import SwiftUI
 import YouTubeEngine
 
-/// Phase 0 placeholder: the app's name, its version and commit, and the debug screens.
+/// The app's tabs (PRD FR-18): Subscriptions first, Search, You. You holds the debug screens until
+/// Settings (US-024) takes them over.
 struct RootView: View {
     @Environment(ModelStore.self) private var models
+    @State private var tab: Tab = .subscriptions
     @State private var path: [Route] = []
-    /// The watch screen's player; it outlives the view and stops when the route is popped.
+    @State private var searchPath: [BrowseRoute] = []
+    @State private var search = SearchModel(browse: PlaybackServices.shared.browse)
+    /// The watch screen's player; it outlives the view and stops when its route is popped.
     @State private var watch: WatchDebug?
+
+    enum Tab: Hashable { case subscriptions, search, you }
 
     enum Route: Hashable {
         case probe
@@ -19,6 +25,43 @@ struct RootView: View {
     }
 
     var body: some View {
+        TabView(selection: $tab) {
+            SubscriptionsPlaceholder()
+                .tabItem { Label("Subscriptions", systemImage: "play.square.stack") }
+                .tag(Tab.subscriptions)
+            SearchView(model: search, path: $searchPath) { AnyView(destination($0)) }
+                .tabItem { Label("Search", systemImage: "magnifyingglass") }
+                .tag(Tab.search)
+            you
+                .tabItem { Label("You", systemImage: "person.crop.circle") }
+                .tag(Tab.you)
+        }
+        .onAppear(perform: launch)
+        .onChange(of: path) { _, _ in stopPlayerIfHidden() }
+        .onChange(of: searchPath) { _, _ in stopPlayerIfHidden() }
+        .onChange(of: models.status) { _, status in
+            AppLog.musicless.info("Model status \(status.logValue)")
+        }
+    }
+
+    /// A list's tap: the player for now (the watch page is US-020), the channel and playlist pages
+    /// (US-021).
+    @ViewBuilder private func destination(_ route: BrowseRoute) -> some View {
+        switch route {
+        case .watch(let videoID):
+            if let watch { WatchDebugView(watch: watch, autoPlay: (videoID, 0)) }
+        case .channel(_, let title), .playlist(_, let title):
+            ContentUnavailableView(title, systemImage: "person.crop.rectangle.stack", description: Text("Coming soon."))
+        }
+    }
+
+    private func stopPlayerIfHidden() {
+        let showsVoices = path.contains { if case .voices = $0 { true } else { false } }
+        let showsWatch = searchPath.contains { if case .watch = $0 { true } else { false } }
+        if !showsVoices, !showsWatch, let watch, watch.isActive { Task { await watch.stop(reason: "left the screen") } }
+    }
+
+    private var you: some View {
         NavigationStack(path: $path) {
             List {
                 Section {
@@ -49,7 +92,7 @@ struct RootView: View {
                     ModelStatusRow()
                 }
             }
-            .navigationTitle("Musicless")
+            .navigationTitle("You")
             .navigationDestination(for: Route.self) { route in
                 switch route {
                 case .probe: DeviceProbeView()
@@ -68,62 +111,88 @@ struct RootView: View {
                 }
             }
         }
-        .onAppear {
-            if watch == nil { watch = WatchDebug(models: models) }
-            PlaybackServices.shared.warmUp()
-            AppLog.probe.info("launch version=\(BuildInfo.version) build=\(BuildInfo.build) commit=\(BuildInfo.commit)")
-            // `--run-probe` opens the probe at launch, so it can be captured without touching the phone:
-            // xcrun devicectl device process launch --device "$DEVICE_ID" --console <bundle id> --run-probe
-            let arguments = ProcessInfo.processInfo.arguments
-            if arguments.contains("--run-probe"), path.isEmpty {
-                path = [.probe]
-            }
-            // `--benchmark` / `--benchmark-locked` start the US-006 benchmark at launch (add
-            // `--console-log` to a Release build to see its lines in `devicectl … --console`).
-            if path.isEmpty, arguments.contains("--benchmark") || arguments.contains("--benchmark-locked") {
-                path = [.benchmark(autoStart: arguments.contains("--benchmark-locked"))]
-            }
-            // `--player-check` asks VISIONOS for five ordinary videos with the real and a -1 timestamp (US-008).
-            if arguments.contains("--player-check") { Task { await PlayerCheckRunner.run() } }
-            if arguments.contains("--resolve-check") { Task { await PlayerCheckRunner.runUS009(record: false) } }
-            if arguments.contains("--record-answers") { Task { await PlayerCheckRunner.runUS009(record: true) } }
-            if arguments.contains("--fetch-check") { Task { await FetchCheckRunner.run() } }
-            // `--sync-check [<id>] [--sync-seconds <s>]`: beep and flash timing of a sync test video (US-013).
-            if let index = arguments.firstIndex(of: "--sync-check") {
-                let next = arguments.indices.contains(index + 1) ? arguments[index + 1] : ""
-                let seconds = arguments.firstIndex(of: "--sync-seconds")
-                    .flatMap { arguments.indices.contains($0 + 1) ? Double(arguments[$0 + 1]) : nil } ?? 40
-                Task { await SyncCheck.run(videoID: next.hasPrefix("--") || next.isEmpty ? nil : next, seconds: seconds) }
-            }
-            // `--solver-check`: the challenge solver's cold and warm speed on this phone (US-016).
-            if arguments.contains("--solver-check") { Task { await SolverCheck.run() } }
-            // `--delay-check [<id> …]`: AAC vs Opus delay by cross-correlation (US-013); presets by default.
-            if let index = arguments.firstIndex(of: "--delay-check") {
-                let ids = arguments[(index + 1)...].prefix { !$0.hasPrefix("--") }
-                let seconds = arguments.firstIndex(of: "--sync-seconds")
-                    .flatMap { arguments.indices.contains($0 + 1) ? Double(arguments[$0 + 1]) : nil } ?? 30
-                Task { await SyncCheck.runDelay(videoIDs: ids.isEmpty ? WatchDebug.presets.map(\.id) + SyncCheck.candidates : Array(ids),
-                                                seconds: seconds) }
-            }
-            // `--voices [<id>] [--voices-at <seconds>]` plays a video's voices at launch (US-012).
-            if path.isEmpty, arguments.contains("--wall-check") { path = [.voices(id: nil, at: 0)] }
-            if path.isEmpty, let index = arguments.firstIndex(of: "--voices") {
-                let next = arguments.indices.contains(index + 1) ? arguments[index + 1] : ""
-                let id = next.hasPrefix("--") || next.isEmpty ? WatchDebug.presets[0].id : next
-                let at = arguments.firstIndex(of: "--voices-at").flatMap { arguments.indices.contains($0 + 1) ? Double(arguments[$0 + 1]) : nil }
-                path = [.voices(id: id, at: at ?? 0)]
-            }
-            if arguments.contains("--record-media") { Task { await MediaRecorder.run() } }
-            AppLog.musicless.info("Model status \(models.status.logValue)")
-            // `--download-models` starts the voice-model download at launch (no auto-start yet: D25).
-            if ProcessInfo.processInfo.arguments.contains("--download-models") { models.start() }
+    }
+
+    /// Launch flags open their screen (on the You tab) or start their check.
+    private func launch() {
+        if watch == nil { watch = WatchDebug(models: models) }
+        PlaybackServices.shared.warmUp()
+        AppLog.probe.info("launch version=\(BuildInfo.version) build=\(BuildInfo.build) commit=\(BuildInfo.commit)")
+        // `--run-probe` opens the probe at launch, so it can be captured without touching the phone:
+        // xcrun devicectl device process launch --device "$DEVICE_ID" --console <bundle id> --run-probe
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("--run-probe"), path.isEmpty {
+            path = [.probe]
         }
-        .onChange(of: path) { _, path in
-            let showsVoices = path.contains { if case .voices = $0 { true } else { false } }
-            if !showsVoices, let watch, watch.isActive { Task { await watch.stop(reason: "left the screen") } }
+        // `--benchmark` / `--benchmark-locked` start the US-006 benchmark at launch (add
+        // `--console-log` to a Release build to see its lines in `devicectl … --console`).
+        if path.isEmpty, arguments.contains("--benchmark") || arguments.contains("--benchmark-locked") {
+            path = [.benchmark(autoStart: arguments.contains("--benchmark-locked"))]
         }
-        .onChange(of: models.status) { _, status in
-            AppLog.musicless.info("Model status \(status.logValue)")
+        // `--player-check` asks VISIONOS for five ordinary videos with the real and a -1 timestamp (US-008).
+        if arguments.contains("--player-check") { Task { await PlayerCheckRunner.run() } }
+        if arguments.contains("--resolve-check") { Task { await PlayerCheckRunner.runUS009(record: false) } }
+        if arguments.contains("--record-answers") { Task { await PlayerCheckRunner.runUS009(record: true) } }
+        if arguments.contains("--fetch-check") { Task { await FetchCheckRunner.run() } }
+        // `--sync-check [<id>] [--sync-seconds <s>]`: beep and flash timing of a sync test video (US-013).
+        if let index = arguments.firstIndex(of: "--sync-check") {
+            let next = arguments.indices.contains(index + 1) ? arguments[index + 1] : ""
+            let seconds = arguments.firstIndex(of: "--sync-seconds")
+                .flatMap { arguments.indices.contains($0 + 1) ? Double(arguments[$0 + 1]) : nil } ?? 40
+            Task { await SyncCheck.run(videoID: next.hasPrefix("--") || next.isEmpty ? nil : next, seconds: seconds) }
+        }
+        // `--solver-check`: the challenge solver's cold and warm speed on this phone (US-016).
+        if arguments.contains("--solver-check") { Task { await SolverCheck.run() } }
+        // `--delay-check [<id> …]`: AAC vs Opus delay by cross-correlation (US-013); presets by default.
+        if let index = arguments.firstIndex(of: "--delay-check") {
+            let ids = arguments[(index + 1)...].prefix { !$0.hasPrefix("--") }
+            let seconds = arguments.firstIndex(of: "--sync-seconds")
+                .flatMap { arguments.indices.contains($0 + 1) ? Double(arguments[$0 + 1]) : nil } ?? 30
+            Task { await SyncCheck.runDelay(videoIDs: ids.isEmpty ? WatchDebug.presets.map(\.id) + SyncCheck.candidates : Array(ids),
+                                            seconds: seconds) }
+        }
+        // `--voices [<id>] [--voices-at <seconds>]` plays a video's voices at launch (US-012).
+        if path.isEmpty, arguments.contains("--wall-check") { path = [.voices(id: nil, at: 0)] }
+        if path.isEmpty, let index = arguments.firstIndex(of: "--voices") {
+            let next = arguments.indices.contains(index + 1) ? arguments[index + 1] : ""
+            let id = next.hasPrefix("--") || next.isEmpty ? WatchDebug.presets[0].id : next
+            let at = arguments.firstIndex(of: "--voices-at").flatMap { arguments.indices.contains($0 + 1) ? Double(arguments[$0 + 1]) : nil }
+            path = [.voices(id: id, at: at ?? 0)]
+        }
+        if arguments.contains("--record-media") { Task { await MediaRecorder.run() } }
+        AppLog.musicless.info("Model status \(models.status.logValue)")
+        // `--download-models` starts the voice-model download at launch (no auto-start yet: D25).
+        if ProcessInfo.processInfo.arguments.contains("--download-models") { models.start() }
+        if path.isEmpty, let index = arguments.firstIndex(of: "--search") {
+            // `--search [<query>]`: the Search tab, searching at once (screenshots, phone checks).
+            tab = .search
+            let next = arguments.indices.contains(index + 1) ? arguments[index + 1] : ""
+            if !next.isEmpty, !next.hasPrefix("--") {
+                Task {
+                    await search.submit(next)
+                    // `--search-more`: two more pages, as two scrolls to the end would ask.
+                    guard arguments.contains("--search-more") else { return }
+                    for _ in 0..<2 { await search.loadMore() }
+                    AppLog.netPath.info("browse search-more done kept=\(search.items.count) droppedShorts=\(search.list.droppedShorts) "
+                                        + "more=\(search.list.hasMore ? "y" : "n")")
+                }
+            }
+        }
+        if !path.isEmpty { tab = .you }
+    }
+}
+
+/// Signed out, Subscriptions asks for sign-in (US-023); until sign-in exists (US-022), it says so.
+struct SubscriptionsPlaceholder: View {
+    var body: some View {
+        NavigationStack {
+            ContentUnavailableView {
+                Label("Subscriptions", systemImage: "play.square.stack")
+            } description: {
+                Text("Sign in to see videos from the channels you follow.")
+            }
+            .navigationTitle("Subscriptions")
+            .navigationBarTitleDisplayMode(.inline)
         }
     }
 }

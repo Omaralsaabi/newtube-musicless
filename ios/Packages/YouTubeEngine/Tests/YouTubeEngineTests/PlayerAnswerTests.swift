@@ -78,9 +78,10 @@ import Testing
         #expect(try Self.fixture("terminal-live-gone").kind == .terminal("live-recording-gone"))
     }
 
-    @Test func fixturesCarryNoAddressOrVisitor() throws {
-        let directory = try #require(Bundle.module.url(forResource: "answers", withExtension: nil, subdirectory: "Fixtures"))
-        for file in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) {
+    @Test(arguments: ["answers", "browse"]) func fixturesCarryNoAddressOrVisitor(folder: String) throws {
+        let directory = try #require(Bundle.module.url(forResource: folder, withExtension: nil, subdirectory: "Fixtures"))
+        for file in try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        where file.pathExtension == "json" {
             let text = try String(contentsOf: file, encoding: .utf8)
             #expect(!text.contains("visitorData") && !text.contains("responseContext"), "\(file.lastPathComponent)")
             let addresses = AnswerScrubber.addresses(in: text).filter { $0 != AnswerScrubber.placeholderIP }

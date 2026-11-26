@@ -858,6 +858,67 @@ Personal Team test (Q8, D15) moves with them: there is still no paid-only capabi
     1.25–2.25 s of frames queued ahead, and the playhead moved 8.2 s in 8 s. It stopped when the app
     came back.
 
+### D50. Search: the TV client, lockup cards, Android's list rules — US-019
+
+- **The request** ports `SearchApi.getSearchResult` and `SearchApiHelper` (no filters yet):
+  - It's the TV client (`ClientProfile.tv`: AppClient.TV, TVHTML5 `7.20260707.07.00`, the Cobalt UA,
+    `POST_DATA_BROWSE_TV`).
+  - It carries the app's visitor in the body and the `X-Goog-Visitor-Id` header.
+  - It's retried once on a transport error or a 5xx (SearchService2 retries with a cloned call); a
+    4xx is an answer.
+  - It goes through `BrowseClient`, which the channel and feed pages will use too.
+- **The answer (2026-11): every item is a `lockupViewModel`**, not a `tileRenderer`.
+  - `FeedParser` reads lockups (video, short, channel, playlist) and `shortsLockupViewModel`. It also
+    reads `tileRenderer` and the classic `*VideoRenderer`s, for the browse pages.
+  - A video's channel id comes from its long-press menu's "Go to channel" (CommonHelper.kt
+    `getBrowseId`).
+  - The length badge sits in `thumbnailBottomOverlayViewModel.badges`. CommonHelper.kt reads only
+    `thumbnailOverlayBadgeViewModel.thumbnailBadges`, so iOS reads both. This is a note for the
+    Android side, not a change to it.
+  - Only `shelfRenderer`s are sections, as on Android; the `clusterShelfRenderer` (a channel's
+    videos) is dropped. The first shelf with a next page is the one that continues.
+  - Fixtures in `Fixtures/browse` are scrubbed of the visitor, tracking fields, `params` and the
+    onesie URLs, and `fixturesCarryNoAddressOrVisitor` covers them.
+- **The list rules** are in `FeedList`, so every list shares them:
+  - **No Shorts, ever** (ShortsFilter: there is no setting). A Short is known by its content type
+    or its reel tap.
+  - **Channels first:** channels among the first page's first 10 kept items move to the top
+    (`hoistChannels`).
+  - Each item appears once.
+  - **Top-up** (`FilteredPageTopUp`): a list that dropped Shorts and keeps fewer than 10 items
+    fetches its next page itself, up to 5 pages per user action.
+  - **Short lists:** when the end of a short list comes into view, that's a layout pass, not the
+    user, so it shares the same budget (`takeAutomatic`).
+    - Without this, each page that kept one item showed a new last row and asked again. On the
+      iPhone, "shorts funny" paged 18 times before this fix.
+    - Now it pages 6 times: the first page has 135 items with 1 video, then 5 top-ups; 3 videos kept
+      of 235 items, then it stops.
+- **History is local** (PRD), in a JSON file in Application Support:
+  - newest first, each query once (ignoring case), at most 50;
+  - swipe to remove one, or clear them all;
+  - offered as suggestions while typing (prefix match).
+
+  Android's history rows come from YouTube's search tags (`MediaServiceSearchTagProvider`), and
+  YouTube's typed suggestions (`getSearchTags`) aren't ported yet; they're not in US-019.
+- **The app now has tabs:** Subscriptions (first; a sign-in note until US-022/023), Search, and You
+  (the debug screens until Settings, US-024).
+  - A video opens the player screen until the watch page (US-020).
+  - Channels and playlists open a placeholder until US-021.
+  - Cards are full width (thumbnail, length badge, title, then "channel · views · age"). Channels
+    are rows with a round avatar. Every card has one VoiceOver label.
+- **Thumbnails:** `AsyncImage` through `URLCache.shared`, sized at launch to 32 MB of memory and
+  256 MB of disk.
+- **Right-to-left:** the app declares no Arabic localization yet (US-025), so iOS runs it in English,
+  left to right, even with Arabic as the language.
+  - `--rtl` forces right-to-left layout for checks.
+  - In the screenshots everything mirrors: avatars and history icons on the right, the length badge
+    in the leading corner, the tabs reversed.
+  - The Arabic check on the phone comes with US-025.
+- **iPhone:**
+  - `--search "big buck bunny"`: 20 results (17 videos, 3 Shorts dropped) in 939 ms over HTTP/3;
+    other runs used HTTP/2 (FR-15 allows both).
+  - `--search "shorts funny" --search-more`: paging as above.
+
 ## Settled `[verify]` items
 
 | PRD item | Result | Evidence |

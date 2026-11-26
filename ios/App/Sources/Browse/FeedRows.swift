@@ -1,0 +1,132 @@
+import SwiftUI
+import YouTubeEngine
+
+/// A thumbnail at 16:9 (or round, for a channel), from the shared URLCache (sized at launch).
+struct Thumbnail: View {
+    let url: URL?
+    var round = false
+
+    var body: some View {
+        AsyncImage(url: url, transaction: Transaction(animation: .easeOut(duration: 0.15))) { phase in
+            switch phase {
+            case .success(let image): image.resizable().scaledToFill()
+            default: Rectangle().fill(Color(white: 0.16))
+            }
+        }
+        .clipShape(round ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: 12, style: .continuous)))
+        .accessibilityHidden(true)
+    }
+}
+
+/// A video, live or playlist result: the thumbnail across the width with its length badge, then
+/// the title and "channel · views · age" (the Android phone's card, VideoCardAdapter).
+struct FeedCard: View {
+    let item: FeedItem
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Color.clear
+                .aspectRatio(16 / 9, contentMode: .fit)
+                .overlay { Thumbnail(url: item.thumbnail) }
+                .overlay(alignment: .bottomTrailing) { badge.padding(8) }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.title)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                if !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+            .padding(.horizontal, 4)
+        }
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityText)
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private var subtitle: String {
+        ([item.channel].compactMap { $0 } + item.details).joined(separator: " · ")
+    }
+
+    @ViewBuilder private var badge: some View {
+        switch item.kind {
+        case .live:
+            BadgeLabel(text: String(localized: "LIVE"), background: .red)
+        case .upcoming:
+            BadgeLabel(text: String(localized: "Upcoming"), background: .black.opacity(0.75))
+        case .playlist:
+            BadgeLabel(text: item.duration ?? String(localized: "Playlist"), background: .black.opacity(0.75), systemImage: "list.bullet")
+        default:
+            if let duration = item.duration {
+                BadgeLabel(text: duration, background: .black.opacity(0.75))
+                    .environment(\.layoutDirection, .leftToRight)  // "10:35" reads the same in Arabic
+            }
+        }
+    }
+
+    private var accessibilityText: String {
+        var parts = [item.title]
+        if let channel = item.channel { parts.append(channel) }
+        parts += item.details
+        switch item.kind {
+        case .live: parts.append(String(localized: "Live"))
+        case .upcoming: parts.append(String(localized: "Upcoming"))
+        case .playlist: parts.append(String(localized: "Playlist"))
+        default: if let duration = item.duration { parts.append(duration) }
+        }
+        return parts.joined(separator: ", ")
+    }
+}
+
+struct BadgeLabel: View {
+    let text: String
+    let background: Color
+    var systemImage: String?
+
+    var body: some View {
+        HStack(spacing: 3) {
+            if let systemImage { Image(systemName: systemImage) }
+            Text(text)
+        }
+        .font(.caption2.weight(.semibold).monospacedDigit())
+        .foregroundStyle(.white)
+        .padding(.horizontal, 5)
+        .padding(.vertical, 2)
+        .background(background, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+    }
+}
+
+/// A channel result: the round avatar, the name, then "@handle · subscribers".
+struct ChannelRow: View {
+    let item: FeedItem
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Thumbnail(url: item.thumbnail, round: true)
+                .frame(width: 64, height: 64)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.title)
+                    .font(.headline)
+                    .lineLimit(1)
+                let details = ([item.channel].compactMap { $0 } + item.details).joined(separator: " · ")
+                if !details.isEmpty {
+                    Text(details)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(([item.title, String(localized: "Channel")] + [item.channel].compactMap { $0 } + item.details).joined(separator: ", "))
+        .accessibilityAddTraits(.isButton)
+    }
+}
