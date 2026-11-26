@@ -63,6 +63,20 @@ public struct PlayerAnswer: Sendable {
         public var audioSampleRate: Int?
         public var audioChannels: Int?
         public var approxDurationMs: Int64?
+        /// `audioTrack.id` on a video with several audio tracks (`ar.4`, `en-US.10`): the language,
+        /// then the kind (4 = original, 2 = descriptive). Nil when the video has one track.
+        public var audioTrackID: String? = nil
+        public var audioIsDefault = false
+        /// One of YouTube's AI dubs.
+        public var isAutoDubbed = false
+
+        /// YouTube's untranslated track (MediaServiceCore `YouTubeHelper.getSabrLanguage`): kind 4,
+        /// or the default track when the id has no kind; never an auto-dub.
+        public var isOriginalAudio: Bool {
+            guard let audioTrackID, !isAutoDubbed else { return false }
+            let parts = audioTrackID.split(separator: ".")
+            return parts.count == 2 ? parts[1] == "4" : audioIsDefault
+        }
 
         /// `video/mp4`, `audio/webm`, …
         public var container: String { String(mimeType.split(separator: ";").first ?? "").trimmingCharacters(in: .whitespaces) }
@@ -114,7 +128,9 @@ public struct PlayerAnswer: Sendable {
                    contentLength: $0.contentLength?.int64, lastModified: $0.lastModified?.string,
                    url: $0.url, signatureCipher: $0.signatureCipher ?? $0.cipher,
                    audioSampleRate: $0.audioSampleRate?.int, audioChannels: $0.audioChannels,
-                   approxDurationMs: $0.approxDurationMs?.int64)
+                   approxDurationMs: $0.approxDurationMs?.int64,
+                   audioTrackID: $0.audioTrack?.id, audioIsDefault: $0.audioTrack?.audioIsDefault ?? false,
+                   isAutoDubbed: $0.audioTrack?.isAutoDubbed ?? false)
         }
         hlsManifestURL = raw.streamingData?.hlsManifestUrl
         dashManifestURL = raw.streamingData?.dashManifestUrl
@@ -218,6 +234,13 @@ private struct RawFormat: Decodable {
     var audioSampleRate: FlexibleNumber?
     var audioChannels: Int?
     var approxDurationMs: FlexibleNumber?
+    var audioTrack: RawAudioTrack?
+}
+
+private struct RawAudioTrack: Decodable {
+    var id: String?
+    var audioIsDefault: Bool?
+    var isAutoDubbed: Bool?
 }
 
 private struct RawRange: Decodable {

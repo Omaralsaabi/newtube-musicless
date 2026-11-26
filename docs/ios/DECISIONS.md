@@ -1278,6 +1278,27 @@ US-031 (share extension), US-032 (Safari Web Extension), US-033 (Live Activity f
 optional), US-034 (VP9 above 1080p, optional) and US-035 (CI, optional). Start with US-030 when
 work resumes: US-031 and US-032 open videos through its `musicless://` link.
 
+### D61. Videos with several audio tracks play the original — fix to US-009
+
+- **The bug:** nphNzcHmowk (an Arabic nasheed) played YouTube's English AI dub with the music
+  removed.
+  - Its answer has two AAC tracks: `ar.4` (the original, default) and `en-US.10` (the dub).
+    They share itag 140 and the same bitrate.
+  - `FormatSelector.audio` took the highest bitrate and never looked at the track, so a dub
+    won as readily as the original.
+- **Now (Android's rule, `Media3TrackAdapter.applyOriginalAudioDefault`):**
+  - Each format's `audioTrack` is parsed (`id`, `audioIsDefault`, `isAutoDubbed`).
+  - When a video has more than one track, the selection keeps only the original's files, then
+    applies the usual rule (AAC-LC at 44.1 kHz, highest bitrate).
+  - Original (MediaServiceCore `YouTubeHelper.getSabrLanguage`): the id's kind is 4, or the
+    track is the default when the id has no kind. An auto-dub is never the original.
+  - When no track is marked original, or there's only one track, nothing changes.
+  - Playback, recovery's replacements, downloads and the debug Opus pick all go through it.
+- The resolver logs `audio-track video=… chosen=ar.4 original=y tracks=ar.4,en-US.10` when
+  there is more than one track.
+- **Not ported yet:** Android's Audio track sheet, for choosing a dub by hand. Every video plays
+  its original.
+
 ## Settled `[verify]` items
 
 | PRD item | Result | Evidence |

@@ -317,8 +317,14 @@ enum VideoResolver {
             label = "\(videoFormat.shortSide ?? 0)p\(videoFormat.fps ?? 30) \(videoFormat.codecs)"
             options = VideoOption.options(answer.adaptiveFormats, source: source)
         }
-        let opus = answer.adaptiveFormats
-            .filter { $0.container == "audio/webm" && $0.codecs == "opus" && $0.url != nil && $0.contentLength != nil }
+        // Several audio tracks (dubs): which one plays, in the log (the original, FormatSelector).
+        let tracks = Set(answer.adaptiveFormats.filter(\.isAudio).compactMap(\.audioTrackID))
+        if tracks.count > 1 {
+            AppLog.netPath.info("audio-track video=\(videoID) chosen=\(audioFormat.audioTrackID ?? "none") "
+                                + "original=\(audioFormat.isOriginalAudio ? "y" : "n") tracks=\(tracks.sorted().joined(separator: ","))")
+        }
+        let opus = FormatSelector.originalTrack(answer.adaptiveFormats
+            .filter { $0.container == "audio/webm" && $0.codecs == "opus" && $0.url != nil && $0.contentLength != nil })
             .max { ($0.bitrate ?? 0) < ($1.bitrate ?? 0) }
             .flatMap { format in URL(string: format.url!).map {
                 MediaFile(itag: format.itag, lastModified: format.lastModified, contentLength: format.contentLength!, url: $0)

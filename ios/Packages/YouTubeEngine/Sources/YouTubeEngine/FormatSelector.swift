@@ -33,12 +33,23 @@ public enum FormatSelector {
             }
     }
 
-    /// The highest-bitrate AAC-LC (`mp4a.40.2`) at 44.1 kHz, the model's rate; else any mp4a.
+    /// The highest-bitrate AAC-LC (`mp4a.40.2`) at 44.1 kHz, the model's rate; else any mp4a. Of the
+    /// original track when the video has several (`originalTrack`).
     static func audio(_ formats: [PlayerAnswer.Format]) -> PlayerAnswer.Format? {
-        let mp4a = formats.filter { $0.container == "audio/mp4" && $0.codecs.hasPrefix("mp4a") && $0.hasDelivery }
+        let mp4a = originalTrack(formats.filter { $0.container == "audio/mp4" && $0.codecs.hasPrefix("mp4a") && $0.hasDelivery })
         let byBitrate = { (left: PlayerAnswer.Format, right: PlayerAnswer.Format) in (left.bitrate ?? 0) < (right.bitrate ?? 0) }
         return mp4a.filter { $0.codecs == "mp4a.40.2" && $0.audioSampleRate == 44_100 }.max(by: byBitrate)
             ?? mp4a.max(by: byBitrate)
+    }
+
+    /// A video with several audio tracks (YouTube's dubs, AI dubs included) plays its original
+    /// track, as Android's `Media3TrackAdapter.applyOriginalAudioDefault` does: otherwise the
+    /// highest bitrate picks a dub as readily as the original (same itag, same bitrate). One track,
+    /// or no track marked original: all of them.
+    public static func originalTrack(_ audio: [PlayerAnswer.Format]) -> [PlayerAnswer.Format] {
+        guard Set(audio.map(\.audioTrackID)).count > 1 else { return audio }
+        let originals = audio.filter(\.isOriginalAudio)
+        return originals.isEmpty ? audio : originals
     }
 }
 

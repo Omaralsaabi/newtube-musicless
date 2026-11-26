@@ -183,6 +183,41 @@ import Testing
         #expect(FormatSelector.select(fallback).audio?.itag == 11)
     }
 
+    /// An itag-140 file with an `audioTrack` (its url names the track, so the tests can tell them apart).
+    private static func track(_ id: String, isDefault: Bool = false, autoDubbed: Bool = false, bitrate: Int = 130_000) -> String {
+        #"{"itag":140,"mimeType":"audio/mp4; codecs=\"mp4a.40.2\"","bitrate":\#(bitrate),"audioSampleRate":"44100","#
+            + #""url":"https://example.invalid/\#(id)","audioTrack":{"id":"\#(id)","audioIsDefault":\#(isDefault),"#
+            + #""isAutoDubbed":\#(autoDubbed),"displayName":"x"}}"#
+    }
+
+    private static func chosenTrack(_ formats: [String]) throws -> String? {
+        let answer = try Self.answer(#"{"playabilityStatus":{"status":"OK"},"streamingData":{"adaptiveFormats":[\#(formats.joined(separator: ","))]}}"#)
+        return FormatSelector.select(answer).audio?.audioTrackID
+    }
+
+    /// nphNzcHmowk: an Arabic original and an English AI dub, both itag 140 at the same bitrate. The
+    /// highest bitrate alone played the dub; Android plays the original.
+    @Test func severalAudioTracksPlayTheOriginal() throws {
+        let original = Self.track("ar.4", isDefault: true), dub = Self.track("en-US.10", autoDubbed: true)
+        #expect(try Self.chosenTrack([dub, original]) == "ar.4")
+        #expect(try Self.chosenTrack([original, dub]) == "ar.4")
+        // A richer dub doesn't win either.
+        #expect(try Self.chosenTrack([original, Self.track("en-US.10", autoDubbed: true, bitrate: 260_000)]) == "ar.4")
+        // Audio description (kind 2) isn't the original.
+        #expect(try Self.chosenTrack([Self.track("ar.2"), original]) == "ar.4")
+    }
+
+    @Test func originalTrackRules() throws {
+        // An auto-dub is never the original, even marked kind 4 or default.
+        #expect(try Self.chosenTrack([Self.track("en.4", isDefault: true, autoDubbed: true, bitrate: 260_000), Self.track("ar.4")]) == "ar.4")
+        // Without a kind in the id, the default track is the original.
+        #expect(try Self.chosenTrack([Self.track("en", bitrate: 260_000), Self.track("ar", isDefault: true)]) == "ar")
+        // Nothing marked original: the usual rule (highest bitrate).
+        #expect(try Self.chosenTrack([Self.track("en.10", bitrate: 260_000), Self.track("ar.10")]) == "en.10")
+        // One track: untouched.
+        #expect(try Self.chosenTrack([Self.track("ar.10")]) == "ar.10")
+    }
+
     @Test func scrubberReplacesTheAddressEverywhere() throws {
         let raw = #"{"responseContext":{"visitorData":"Cgt"},"streamingData":{"hlsManifestUrl":"https://m.invalid/api/manifest/ip/2a02%3A1234%3A%3A1/x","adaptiveFormats":[{"itag":1,"mimeType":"audio/mp4","url":"https://rr1.invalid/videoplayback?expire=1&ip=2a02%3A1234%3A%3A1&id=o"}]},"playabilityStatus":{"status":"OK"}}"#
         let text = String(decoding: try AnswerScrubber.scrub(Data(raw.utf8)), as: UTF8.self)
