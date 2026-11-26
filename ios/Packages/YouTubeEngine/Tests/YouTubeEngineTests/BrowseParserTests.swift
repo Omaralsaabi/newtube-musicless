@@ -68,6 +68,29 @@ import Testing
         #expect(more.items.count >= 30 && more.continuation == nil)
     }
 
+    @Test func aChannelReadsItsHeaderAndTitledShelves() throws {
+        let channel = try FeedParser.channel(try Self.fixture("channel_blender"), id: "UCSMOQeBJ2RAnuFungnQOxLg")
+        #expect(channel.title == "Blender" && channel.handle == "@BlenderOfficial" && channel.subscribers == "1.26M subscribers")
+        #expect(channel.avatar?.host == "yt3.googleusercontent.com" && channel.banner != nil)
+        #expect(channel.sections.count == 15)
+        #expect(channel.sections.map(\.title).prefix(3) == ["Made with Blender", "Videos", "Shorts"])
+        let uploads = try #require(channel.sections.first { $0.isUploads })
+        #expect(uploads.title == "Videos" && uploads.page.continuation != nil, "the Videos shelf links to the videos tab")
+        #expect(channel.sections[2].page.items.allSatisfy { $0.kind == .short }, "TILE_CONTENT_TYPE_SHORTS")
+        #expect(channel.sections.first { $0.title == "Playlists" }?.page.items.allSatisfy { $0.kind == .playlist } == true)
+        #expect(channel.sections.last?.title == "", "the untitled tab row (channel cards) is kept for the app to skip")
+        let more = try FeedParser.continuationPage(try Self.fixture("channel_blender_videos_continuation"))
+        #expect(more.items.count == 24 && more.continuation != nil, "a horizontalListContinuation")
+    }
+
+    @Test func aPlaylistReadsItsTitleOwnerAndVideos() throws {
+        let playlist = try FeedParser.playlist(try Self.fixture("playlist_open_movies"), id: "PL6B3937A5D230E335")
+        #expect(playlist.title == "Official Blender Open Movies" && playlist.owner == "Blender")
+        #expect(playlist.page.items.count == 15 && playlist.page.continuation != nil)
+        let first = try #require(playlist.page.items.first)
+        #expect(first.id == "l5OZu-IrXpw" && first.duration == "6:31" && first.badges == ["4K"] && first.details == ["622K views", "6 months ago"])
+    }
+
     @Test func anAnswerWithoutSectionsIsAnError() {
         #expect(throws: BrowseError.self) { try FeedParser.page(Data(#"{"estimatedResults":"0"}"#.utf8)) }
         #expect(throws: BrowseError.self) { try FeedParser.page(Data("<html>".utf8)) }

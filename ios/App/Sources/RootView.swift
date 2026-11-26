@@ -49,8 +49,10 @@ struct RootView: View {
         switch route {
         case .watch(let videoID):
             if let watch { WatchView(videoID: videoID, player: watch, path: path) }
-        case .channel(_, let title), .playlist(_, let title):
-            ContentUnavailableView(title, systemImage: "person.crop.rectangle.stack", description: Text("Coming soon."))
+        case .channel(let id, let title):
+            ChannelView(id: id, title: title, path: path)
+        case .playlist(let id, let title):
+            PlaylistView(id: id, title: title, path: path)
         }
     }
 
@@ -181,6 +183,14 @@ struct RootView: View {
                     AppLog.netPath.info("browse search-more done kept=\(search.items.count) droppedShorts=\(search.list.droppedShorts) "
                                         + "more=\(search.list.hasMore ? "y" : "n")")
                 }
+            }
+        }
+        // `--channel <id>` / `--playlist <id>`: those pages (US-021), on the Search tab's stack.
+        for (flag, route) in [("--channel", { BrowseRoute.channel(id: $0, title: "") }),
+                              ("--playlist", { BrowseRoute.playlist(id: $0, title: "") })] as [(String, (String) -> BrowseRoute)] {
+            if path.isEmpty, let index = arguments.firstIndex(of: flag), arguments.indices.contains(index + 1) {
+                tab = .search
+                searchPath = [route(arguments[index + 1])]
             }
         }
         // `--watch <id>`: the watch page for a video (US-020), on the Search tab's stack.

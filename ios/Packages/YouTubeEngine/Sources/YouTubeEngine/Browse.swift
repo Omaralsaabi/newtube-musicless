@@ -21,7 +21,7 @@ public struct BrowseClient: Sendable {
     private let transport: InnerTubeTransport
     private let visitor: @Sendable () async -> String?
     private let locale: @Sendable () -> RequestLocale
-    private let log: @Sendable (String) -> Void
+    let log: @Sendable (String) -> Void
 
     public init(transport: InnerTubeTransport, visitor: @escaping @Sendable () async -> String?,
                 locale: @escaping @Sendable () -> RequestLocale = { .current }, log: @escaping @Sendable (String) -> Void = { _ in }) {
@@ -42,7 +42,7 @@ public struct BrowseClient: Sendable {
     /// The next page of a search (SearchApiHelper.getContinuationQuery).
     public func continueSearch(_ token: String) async throws -> FeedPage {
         let start = ContinuousClock.now
-        let page = try FeedParser.page(try await post("search", ["continuation": token]))
+        let page = try FeedParser.continuationPage(try await post("search", ["continuation": token]))
         logPage("search-continuation", page, start: start, extra: nil)
         return page
     }
@@ -60,7 +60,7 @@ public struct BrowseClient: Sendable {
     /// More related videos (WatchNextService.continueGroup: the browse continuation body on `/next`).
     public func continueNext(_ token: String) async throws -> FeedPage {
         let start = ContinuousClock.now
-        let page = try FeedParser.page(try await post("next", ["continuation": token]))
+        let page = try FeedParser.continuationPage(try await post("next", ["continuation": token]))
         logPage("next-continuation", page, start: start, extra: nil)
         return page
     }
@@ -120,7 +120,7 @@ public struct BrowseClient: Sendable {
         return (try? JSONSerialization.data(withJSONObject: root, options: [.sortedKeys])) ?? Data()
     }
 
-    private func logPage(_ what: String, _ page: FeedPage, start: ContinuousClock.Instant, extra: String?) {
+    func logPage(_ what: String, _ page: FeedPage, start: ContinuousClock.Instant, extra: String?) {
         let counts = Dictionary(grouping: page.items, by: \.kind).mapValues(\.count)
         let kinds = FeedItem.Kind.allCases.compactMap { kind in counts[kind].map { "\(kind.rawValue)=\($0)" } }.joined(separator: " ")
         log("browse \(what) items=\(page.items.count) \(kinds) continuation=\(page.continuation == nil ? "n" : "y") "

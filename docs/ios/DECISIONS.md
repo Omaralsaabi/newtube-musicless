@@ -960,6 +960,39 @@ Personal Team test (Q8, D15) moves with them: there is still no paid-only capabi
 - New launch flags: `--watch <id>` (the watch page) and `--up-next` (Up next for that launch, not
   saved).
 
+### D52. The channel and playlist pages — US-021
+
+- **A channel** is `/browse` with its id over the TV client (`tvBrowseRenderer` →
+  `tvSurfaceContentRenderer`).
+  - The header (`channelHeaderRenderer`) gives the name, the avatar, the banner, and a subtitle line
+    of handle and subscribers.
+  - Every `shelfRenderer` is a section with a title (`avatarLockup` title), its tiles and its own
+    continuation: Made with Blender, Videos, Shorts, playlists, live streams, Playlists, channels.
+  - The Videos shelf is the uploads. It's recognized by its link to the videos tab (browse params
+    that start with `EgZ2aWRlb3M`, "videos" in protobuf), not by its title, which is localized.
+- **On the phone, as Android does** (MobileChannelActivity, ShortsFilter):
+  - the sections are tabs (chips here), and the uploads are selected first;
+  - each section pages through its own `horizontalListContinuation`;
+  - Shorts are dropped, and a section they empty disappears (#63);
+  - the untitled last shelf is skipped: it's the tab row (channel cards carrying each tab's
+    params), and the titled shelves already are those tabs.
+- **A playlist** is `/browse` with `VL<id>` (`twoColumnRenderer`: `entityMetadataRenderer` for the
+  title and owner, `playlistVideoListRenderer` for the videos and their continuation).
+- **One continuation reader** (`FeedParser.continuationPage`) covers `sectionListContinuation`
+  (search, related) and the single-list kinds (`horizontalListContinuation`,
+  `playlistVideoListContinuation`, grid, vertical).
+- **The tile parser** now knows `TILE_CONTENT_TYPE_SHORTS` and the lines' badges ("4K").
+- **Thumbnails** fill and crop their frame. A video whose `hq720.jpg` has baked-in pillarbox bars
+  shows them, as on YouTube.
+- **Fixtures:**
+  - The Blender channel is trimmed to 6 items per shelf. The scrubber now keeps a browse endpoint's
+    `params` (they name a tab) and drops only a watch endpoint's (the blob with the false "Cgt"
+    match).
+  - Also recorded: the Videos continuation and the Open Movies playlist.
+- **iPhone:** the channel took 806 ms (15 sections, 199 items in an 842 KB answer; uploads found),
+  the playlist 216 ms (15 videos and a continuation), both over HTTP/3.
+- New launch flags: `--channel <id>` and `--playlist <id>`.
+
 ## Settled `[verify]` items
 
 | PRD item | Result | Evidence |

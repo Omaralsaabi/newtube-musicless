@@ -176,6 +176,9 @@ public enum FeedParser {
             (line["lineRenderer"]["items"].array ?? []).compactMap { $0["lineItemRenderer"]["text"].text }
                 .filter { $0.trimmingCharacters(in: .whitespaces) != "•" }
         }
+        let badges = (metadata["lines"].array ?? []).flatMap { line in
+            (line["lineRenderer"]["items"].array ?? []).compactMap { $0["lineItemRenderer"]["badge"]["metadataBadgeRenderer"]["label"].string }
+        }
         let thumbnail = bestThumbnail(header["thumbnail"]["thumbnails"])
         var duration: String?, live = false, upcoming = false
         for overlay in header["thumbnailOverlays"].array ?? [] {
@@ -188,6 +191,10 @@ public enum FeedParser {
             if !live, !upcoming { duration = status["text"].text }
         }
         switch tile["contentType"].string ?? "" {
+        case "TILE_CONTENT_TYPE_SHORTS":
+            guard let id = endpoint["reelWatchEndpoint"]["videoId"].string ?? endpoint["watchEndpoint"]["videoId"].string
+                    ?? tile["contentId"].string else { return nil }
+            return FeedItem(kind: .short, id: id, title: title, thumbnail: thumbnail)
         case "TILE_CONTENT_TYPE_CHANNEL":
             guard let id = endpoint["browseEndpoint"]["browseId"].string else { return nil }
             return FeedItem(kind: .channel, id: id, title: title, channelID: id, thumbnail: thumbnail, details: lines.flatMap { $0 })
@@ -202,7 +209,7 @@ public enum FeedParser {
             guard let id = endpoint["watchEndpoint"]["videoId"].string else { return nil }
             return FeedItem(kind: live ? .live : upcoming ? .upcoming : .video, id: id, title: title, channel: lines.first?.first,
                             channelID: tileChannelID(tile), thumbnail: thumbnail, duration: duration,
-                            details: lines.dropFirst().flatMap { $0 })
+                            details: lines.dropFirst().flatMap { $0 }, badges: badges)
         }
     }
 

@@ -7,14 +7,17 @@ struct Thumbnail: View {
     var round = false
 
     var body: some View {
-        AsyncImage(url: url, transaction: Transaction(animation: .easeOut(duration: 0.15))) { phase in
-            switch phase {
-            case .success(let image): image.resizable().scaledToFill()
-            default: Rectangle().fill(Color(white: 0.16))
+        // The rectangle takes the offered size; the image fills it and is cropped to it (a 4:3
+        // `sddefault.jpg` with letterbox bars crops to its 16:9 picture).
+        Rectangle()
+            .fill(Color(white: 0.16))
+            .overlay {
+                AsyncImage(url: url, transaction: Transaction(animation: .easeOut(duration: 0.15))) { phase in
+                    if case .success(let image) = phase { image.resizable().scaledToFill() }
+                }
             }
-        }
-        .clipShape(round ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: 12, style: .continuous)))
-        .accessibilityHidden(true)
+            .clipShape(round ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: 12, style: .continuous)))
+            .accessibilityHidden(true)
     }
 }
 
