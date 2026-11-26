@@ -88,6 +88,9 @@ import Testing
             #expect(addresses.isEmpty, "\(file.lastPathComponent): \(addresses)")
             #expect(AnswerScrubber.nodeNames(in: text).isEmpty, "\(file.lastPathComponent): cache node names")
             #expect(text.range(of: #"gcr(=|\\?/)(?!scrubbed)"#, options: .regularExpression) == nil, "\(file.lastPathComponent): country")
+            // Opaque feedback tokens: no test reads them, and secret scanners flag them as API keys.
+            #expect(text.range(of: #""feedbackToken"\s*:\s*"(?!scrubbed")"#, options: .regularExpression) == nil,
+                    "\(file.lastPathComponent): feedback token")
         }
     }
 

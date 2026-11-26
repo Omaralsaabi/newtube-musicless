@@ -19,7 +19,8 @@ names). `BrowseParserTests` reads them; `fixturesCarryNoAddressOrVisitor` re-che
 - `channel_blender_videos_continuation.json`: the Videos shelf's next page (`horizontalListContinuation`).
 - `playlist_open_movies.json`: `/browse` for `VLPL6B3937A5D230E335` (`twoColumnRenderer`:
   `entityMetadataRenderer` and `playlistVideoListRenderer`).
-- `home_signed_out.json`: `/browse` `default` (Home) without an account: a search bar only.
+- `home_signed_out.json`: `/browse` `default` (Home) without an account: a search bar only. Its
+  `feedbackToken`s read `scrubbed` (a secret scanner flagged the real ones as an API key).
 - `comments_bbb.json`: the comments panel's first page (`/next` with its token): an
   `itemSectionContinuation` of `commentThreadRenderer`s and a next token. Trimmed to 5; authors,
   avatars and texts replaced (`@commenterN`, `Comment text N`).
