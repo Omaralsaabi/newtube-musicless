@@ -208,16 +208,25 @@ struct DownloadJob: Sendable {
         try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: work) }
         report(.downloading(0))
-        var media = try await resolve()
+        let media = try await resolve()
+        // What a recovery blames and repoints, shared by both files (PlaybackServices' PlayingFiles).
+        let playing = PlayingFiles(media)
         let audioURL = work.appending(path: "audio.m4a"), videoURL = work.appending(path: "video.mp4")
         let total = Double(media.audio.file.contentLength + (media.video?.file.contentLength ?? 0))
         let audioBytes = media.audio.file.contentLength
-        media = try await fetch(.audio, media: media, to: audioURL) { bytes in
-            report(.downloading(Double(bytes) / total))
+        let pending = try await fetch(.audio, source: media.audio, playing: playing, to: audioURL) { bytes in
+            report(.downloading(min(1, Double(bytes) / total)))
         }
-        if media.video != nil {
-            media = try await fetch(.video, media: media, to: videoURL) { bytes in
-                report(.downloading(Double(audioBytes + bytes) / total))
+        if var video = media.video {
+            // A recovery during the audio also answered for the picture: start from its link.
+            var fetcher: MediaFetcher?
+            switch pending {
+            case .same(let file)?: video.file = file
+            case .replacement(let source, let replacement)?: video = source; fetcher = replacement
+            case nil: break
+            }
+            _ = try await fetch(.video, source: video, fetcher: fetcher, playing: playing, to: videoURL) { bytes in
+                report(.downloading(min(1, Double(audioBytes + bytes) / total)))
             }
         }
         var audioForMux = audioURL
@@ -246,59 +255,112 @@ struct DownloadJob: Sendable {
         return name
     }
 
-    private enum Track { case audio, video }
+    /// `--synthetic-wall` (US-017's debug wall, for downloads too): the first answer's links refuse
+    /// every request starting at 60 s of stream or later, and its walls go to the separate book.
+    private static var synthetic: Bool { ProcessInfo.processInfo.arguments.contains("--synthetic-wall") }
+    private static let step: Int64 = 4 * 1024 * 1024
 
     /// The answer's files at the chosen quality (`itag`, else the settings' choice).
     private func resolve() async throws -> ResolvedMedia {
-        var media = try await VideoResolver.media(for: item.videoID, withVideo: true)
+        var media = try await VideoResolver.media(for: item.videoID, withVideo: true, synthetic: Self.synthetic)
         if let itag = item.itag, let option = media.videoOptions.first(where: { $0.itag == itag }) {
             media.video = option.source
+            media.videoItag = itag
         }
         return media
     }
 
-    /// The whole file in ranges through the media fetcher. A 403 is routine: the video is resolved
-    /// again and the fetcher repoints to the same file (itag, lmt, length) at its new URL; when the
-    /// answer has another encode, the file starts over with it. Never the refused URL again.
-    private func fetch(_ track: Track, media: ResolvedMedia, to url: URL, progress: @Sendable (Int64) -> Void) async throws -> ResolvedMedia {
-        var media = media
-        var file = track == .audio ? media.audio.file : media.video!.file
-        var fetcher = MediaFetcher(file: file, log: { AppLog.netPath.info($0) })
+    /// The whole file in 4 MB ranges through the media fetcher. A 403 is routine and gets
+    /// playback's recovery (`VideoResolver.recover`): the wall rule reads the refusal in stream time
+    /// (from the file's sidx), the refusing source is blamed and asked last, and the new answer's
+    /// copy of the same file (itag, lmt, length) takes over at the same offset. When it has no copy,
+    /// its replacement starts over. The refused URL is never asked again. Returns what the last
+    /// recovery offered for the other track, if anything.
+    private func fetch(_ track: MediaRefusal.Track, source: FMP4Source, fetcher given: MediaFetcher? = nil,
+                       playing: PlayingFiles, to url: URL,
+                       progress: @Sendable (Int64) -> Void) async throws -> RecoveredFiles.Track? {
+        let log: @Sendable (String) -> Void = { AppLog.netPath.info($0) }
+        var source = source
+        var fetcher = given ?? MediaFetcher(file: source.file, log: log)
         FileManager.default.createFile(atPath: url.path, contents: nil)
         let handle = try FileHandle(forWritingTo: url)
         defer { try? handle.close() }
         var offset: Int64 = 0
+        var index: FMP4SegmentIndex?
+        var servedStarts: [Int64] = []
+        var wall: Int64?
         var recoveries = 0
-        let step: Int64 = 4 * 1024 * 1024
-        while offset < file.contentLength {
+        var other: RecoveredFiles.Track?
+        while offset < source.file.contentLength {
             try Task.checkCancellation()
-            let end = min(offset + step, file.contentLength) - 1
+            var end = min(offset + Self.step, source.file.contentLength) - 1
+            // A request that starts below the wall and runs past it would be served (googlevideo
+            // refuses by a request's start), so the synthetic wall ends one there.
+            if let wall, offset < wall { end = min(end, wall - 1) }
             do {
                 let data = try await fetcher.read(offset...end)
                 try handle.write(contentsOf: data)
+                servedStarts.append(offset)
                 offset += Int64(data.count)
                 progress(offset)
+                if index == nil, offset > source.indexRange.upperBound {
+                    index = Self.readIndex(url, source.indexRange)
+                    if Self.synthetic, let index,
+                       let reference = index.references.first(where: { index.seconds($0.startTime) >= 60 }) {
+                        wall = reference.bytes.lowerBound
+                        await fetcher.setSyntheticRefusal(fromByte: reference.bytes.lowerBound)
+                        log("download synthetic-wall track=\(track.rawValue) byte=\(reference.bytes.lowerBound)")
+                    }
+                }
             } catch let refused as MediaRefused {
                 recoveries += 1
                 guard recoveries <= 3 else { throw refused }
-                AppLog.netPath.info("download media403 itag=\(refused.itag) at=\(offset) recovery=\(recoveries)")
-                let fresh = try await resolve()
-                let candidate = track == .audio ? fresh.audio.file : fresh.video?.file
-                guard let candidate else { throw refused }
-                if candidate.isSameFile(as: file) {
-                    try await fetcher.repoint(to: candidate)
-                } else {
-                    // Another encode: what was written belongs to the old one; start over with it.
+                let refusal = MediaRefusal(track: track, itag: refused.itag, forbiddenMs: Self.streamMs(offset, index),
+                                           lowestServedMs: servedStarts.first.map { Self.streamMs($0, index) } ?? -1,
+                                           highestServedMs: servedStarts.last.map { Self.streamMs($0, index) } ?? -1)
+                log("download media403 track=\(track.rawValue) itag=\(refused.itag) at=\(offset) forbiddenMs=\(refusal.forbiddenMs) "
+                    + "recovery=\(recoveries)")
+                guard let recovered = await VideoResolver.recover(videoID: item.videoID, playing: playing, refusal: refusal,
+                                                                  synthetic: Self.synthetic),
+                      let next = track == .audio ? recovered.audio : recovered.video
+                else { throw refused }
+                other = track == .audio ? recovered.video : recovered.audio
+                wall = nil
+                switch next {
+                case .same(let file):
+                    try await fetcher.repoint(to: file)
+                    source.file = file
+                    log("download resumed track=\(track.rawValue) itag=\(file.itag) at=\(offset)")
+                case .replacement(let replacement, let replacementFetcher):
+                    // Another file: what was written belongs to the old one; start over with it.
                     try handle.truncate(atOffset: 0)
                     try handle.seek(toOffset: 0)
                     offset = 0
-                    fetcher = MediaFetcher(file: candidate, log: { AppLog.netPath.info($0) })
+                    index = nil
+                    servedStarts = []
+                    source = replacement
+                    fetcher = replacementFetcher
+                    log("download restarted track=\(track.rawValue) itag=\(replacement.file.itag)")
                 }
-                file = candidate
-                media = fresh
             }
         }
-        return media
+        return other
+    }
+
+    /// The file's sidx, from the bytes already written.
+    private static func readIndex(_ url: URL, _ range: ClosedRange<Int64>) -> FMP4SegmentIndex? {
+        guard let reader = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? reader.close() }
+        guard (try? reader.seek(toOffset: UInt64(range.lowerBound))) != nil,
+              let data = try? reader.read(upToCount: Int(range.upperBound - range.lowerBound + 1)) else { return nil }
+        return try? FMP4Demuxer.parseIndex(data, fileOffset: range.lowerBound)
+    }
+
+    /// Where a byte falls in stream time: the start of its sidx segment (0 before the first one).
+    private static func streamMs(_ byte: Int64, _ index: FMP4SegmentIndex?) -> Int64 {
+        guard let index else { return 0 }
+        guard let reference = index.references.last(where: { $0.bytes.lowerBound <= byte }) else { return 0 }
+        return Int64(index.seconds(reference.startTime) * 1000)
     }
 
     /// `<title>.mp4` in Documents, without characters Files refuses, never overwriting.

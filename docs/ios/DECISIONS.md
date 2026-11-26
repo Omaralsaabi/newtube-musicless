@@ -1202,10 +1202,25 @@ Personal Team test (Q8, D15) moves with them: there is still no paid-only capabi
 - **Fetching: the media fetcher, not a background `URLSession`** (the PRD's wording).
   - Each file is read in 4 MB ranges through playback's `MediaFetcher`, so the `Range:` header
     and the 403 recovery are the tested ones, unchanged.
-  - A 403 resolves the video again. When the new answer has the same file (itag, lmt, length),
-    the fetcher repoints to its new URL and carries on at the same offset. When it has another
-    encode, that file starts over. At most 3 recoveries per file; the refused URL is never asked
-    again.
+  - A 403 gets playback's recovery, `VideoResolver.recover`. The refusal goes to the wall rule
+    in stream time (byte offsets mapped through the file's sidx, read from the bytes already
+    written), the refusing source is blamed and asked last, and the new answer's copy of the
+    same file (itag, lmt, length) takes over at the same offset. When there is no copy, the
+    answer's replacement starts over. When the audio's recovery also answers for the picture,
+    the video starts from that link. At most 3 recoveries per file; the refused URL is never
+    asked again.
+    - The first version resolved the video as if it were new. That never told the walker which
+      source refused, so it could hand back that source's link again.
+  - `--synthetic-wall` works for downloads too (the first answer's links refuse from 60 s of
+    stream). googlevideo refuses by a request's start, so with the switch on a range ends at the
+    wall's byte.
+    - Simulator, dQw4w9WgXcQ at 1080p: `download media403 track=video itag=137
+      forbiddenMs=61880`, then `signature=wall`, `wall-swap from=VISIONOS to=TV_TIZEN
+      video=same:137`, `download resumed … at=24633252`.
+    - The file came out as 213.04 s of audio and 213.08 s of video, and decodes without errors
+      across the repoint.
+    - The audio file (3.4 MB) arrived in one range, before the wall was armed, so the "picture
+      answered by the audio's recovery" step hasn't run yet.
   - Leaving the app is covered by the iOS 26 background task below, not by background
     transfers. A background session would need a second, delegate-based fetch path with its own
     403 handling, and it can't run the separation anyway.
@@ -1247,8 +1262,21 @@ Personal Team test (Q8, D15) moves with them: there is still no paid-only capabi
   - iPhone: the same file, copied off with `devicectl device copy from`: same durations and
     levels, voices in 1.7 s;
   - the Remove-music-off mux, on the Mac: 19.06 s and 19.00 s.
-  - Not yet exercised on a device: a media 403 in the middle of a download, and a download long
-    enough to leave the app during it.
+  - iPhone (iOS 26), Big Buck Bunny (10 min), checked by the developer:
+    - the app went to the Home Screen right after the download started;
+    - the system progress showed while away;
+    - the download finished in the background, and the file is listed in You → Downloads and in
+      Files → On My iPhone → NewTube Musicless.
+  - Screens checked on the iPhone in English and Arabic: the watch page's button and quality
+    list, the Downloads rows, swipe actions and playback. No issues.
+
+### D60. The remaining stories are deferred (developer's decision)
+
+After US-028 the app is complete enough for now. These stories are **not done** and wait for a
+later round: US-029 (keep-alive fallback, optional), US-030 (URL scheme and App Intents),
+US-031 (share extension), US-032 (Safari Web Extension), US-033 (Live Activity for downloads,
+optional), US-034 (VP9 above 1080p, optional) and US-035 (CI, optional). Start with US-030 when
+work resumes: US-031 and US-032 open videos through its `musicless://` link.
 
 ## Settled `[verify]` items
 

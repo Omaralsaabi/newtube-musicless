@@ -44,6 +44,15 @@ public struct MediaRefusal: Sendable, Equatable {
     public var forbiddenMs: Int64
     public var lowestServedMs: Int64
     public var highestServedMs: Int64
+
+    /// For refusals outside the engine (downloads, US-028), which use the same recovery.
+    public init(track: Track, itag: Int, forbiddenMs: Int64, lowestServedMs: Int64, highestServedMs: Int64) {
+        self.track = track
+        self.itag = itag
+        self.forbiddenMs = forbiddenMs
+        self.lowestServedMs = lowestServedMs
+        self.highestServedMs = highestServedMs
+    }
 }
 
 /// What a recovery's new answer offers for each playing file: the same file at a new URL (a
