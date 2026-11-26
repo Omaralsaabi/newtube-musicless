@@ -148,10 +148,10 @@ struct SeekBar: View {
         .font(.caption2)
     }
 
+    /// The position in the locale's digits (Arabic-Indic in ar_SA), as the system's players show it.
     static func clock(_ seconds: Double) -> String {
-        let total = Int(max(seconds, 0).rounded(.down))
-        let hours = total / 3600, minutes = total / 60 % 60, secs = total % 60
-        return hours > 0 ? String(format: "%d:%02d:%02d", hours, minutes, secs) : String(format: "%d:%02d", minutes, secs)
+        let duration = Duration.seconds(Int(max(seconds, 0).rounded(.down)))
+        return duration.formatted(.time(pattern: seconds >= 3600 ? .hourMinuteSecond : .minuteSecond))
     }
 }
 

@@ -24,6 +24,11 @@
 	<string>unknown</string>
 	<key>MusiclessModelBaseURL</key>
 	<string>$(MUSICLESS_MODEL_BASE_URL)</string>
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>ar</string>
+	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>

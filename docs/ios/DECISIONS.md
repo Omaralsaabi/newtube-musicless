@@ -1100,6 +1100,37 @@ Personal Team test (Q8, D15) moves with them: there is still no paid-only capabi
   file).
 - New launch flag: `--settings`.
 
+### D56. Arabic and right-to-left — US-025
+
+- **The strings:** `ios/tools/import_android_strings.py` builds `Localizable.xcstrings`.
+  - The keys are the app's own, listed by the compiler (`SWIFT_EMIT_LOC_STRINGS`, `.stringsdata`).
+  - Each key is matched by its English text, first in the phone's files the PRD names
+    (`strings_mobile.xml`, `strings_settings.xml`, plus the fork's `strings_fork.xml`), then in the
+    shared `common` module's `strings.xml`. The PRD's three files alone matched 26 of 106; with the
+    fork's and common's, 36.
+  - The Arabic is the same key in `values-ar`, with Android's placeholders turned into the iOS
+    specifiers, and the Android key is the entry's comment.
+  - **The other 70 are iOS's own** (the player's accessibility labels, sign-in, settings, debug
+    rows). Their Arabic is in `ios/tools/strings_ios_only_ar.json`, written to Android's wording
+    (تعذّر…, سجّل الدخول, إزالة الموسيقى, نماذج الصوت, ملء الشاشة, صورة داخل صورة); comment
+    "iOS only". **A native speaker should review them.**
+  - `--check` fails on any key left without Arabic.
+- **The app declares en and ar** (`CFBundleLocalizations`). The catalog builds into `ar.lproj`, so
+  iOS runs the app in Arabic when Arabic is the system or per-app language. The fork's first run
+  sets Arabic itself; iOS leaves the choice to the user (Settings' Language row, D55).
+- **Right-to-left:** layouts mirror on their own (leading and trailing everywhere). Playback
+  controls, the seek bar and the full-screen controls stay left to right, as time runs that way;
+  the user code stays left to right too.
+- **Numbers and durations follow the locale:**
+  - the seek bar's times use `Duration` formatting (Arabic-Indic digits in ar_SA: ٠:٠٢ / ١٠:٣٤);
+  - speeds use `formatted()`, sizes `ByteCountFormatter`;
+  - views, ages and subscribers come from YouTube in the request's language (`acceptLanguage` is
+    the locale's, so they arrive in Arabic);
+  - length badges are YouTube's own text ("33:58").
+- **Checked in Arabic on the simulator:** search (with channels), the watch page with Up next, the
+  sign-in sheet and Settings, all right to left. On the iPhone: a launch in Arabic searching
+  (`-AppleLanguages (ar) -AppleLocale ar_SA` after `--`, see ios/CLAUDE.md).
+
 ## Settled `[verify]` items
 
 | PRD item | Result | Evidence |
