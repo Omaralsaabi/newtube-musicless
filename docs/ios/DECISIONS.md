@@ -1154,6 +1154,42 @@ Personal Team test (Q8, D15) moves with them: there is still no paid-only capabi
 - **iPhone:** the comments came in 249 ms (20, with a next page) after `/next`. `--comments` opens
   the sheet once `/next` lands.
 
+### D58. Local files with the music removed — US-027
+
+- **Opening:** You → Open a file (the document picker, movies and audio), and "Open in" from Files
+  and other apps (`CFBundleDocumentTypes`: `public.movie` and `public.audio`, Viewer, Alternate
+  rank; `LSSupportsOpeningDocumentsInPlace` was already on).
+  - Files are played in place, with security-scoped access held until the player stops.
+  - `--file <name>` plays a file from the app's Documents (Files → On My iPhone).
+- **`LocalPlayerEngine`** (MediaPipeline), next to the YouTube engine, behind a small
+  `PlaybackEngine` protocol (start, play, pause, seek, Remove music, speed, video on/off, snapshot,
+  close; quality stays the YouTube engine's). It publishes the same `Snapshot`, so the player
+  model, the surface, Now Playing, PiP and history code drive either.
+  - **Audio:** `AVAssetReader` decodes any codec the file has to interleaved Float32 at 44.1 kHz
+    stereo. The same `SeparatorStage` (Android's d074c0c6: local files get music removal too) feeds
+    the same renderer and synchronizer. The reader starts on a packet boundary, so the frames
+    before the target are trimmed.
+  - **Video:** the reader decodes too (IOSurface-backed frames), so a seek lands on its frame
+    without keyframe handling. The display layer showed nothing until the frames were
+    IOSurface-backed.
+  - **The hold rule** is the YouTube engine's for the audio: less than 0.25 s queued while more is
+    coming holds the clock, debounced 100 ms, and a restart begins in a hold.
+    - **Not the YouTube engine's for the decoded picture:** a held display layer takes only a few
+      decoded frames, never 0.25 s.
+    - On the iPhone that deadlocked: the video looked starved, so the clock stayed held, so the
+      layer never drained. The simulator's layer took more frames and hid it.
+    - So the video side needs a frame at the target to start, and holds later only if frames fall
+      behind the clock.
+  - The local engine has no 403s, no walls and no history (a local file has no video id).
+- **Package tests:** a 3 s AAC tone written with AVAssetWriter plays through the stage to its end,
+  and a seek restarts the stage at the target (pass-through when Remove music is off).
+- **iPhone:** a 32 s test movie (H.264 test pattern with the Sintel separation clip, copied into
+  Documents with `devicectl device copy to`):
+  - opened in 36 ms, first frame at 0;
+  - the start hold released at 1.11 s queued;
+  - played to `local ended at=30.05` (the soundtrack's end) with no underrun.
+- On the simulator the picture and "Preparing voices…" show over the test pattern.
+
 ## Settled `[verify]` items
 
 | PRD item | Result | Evidence |

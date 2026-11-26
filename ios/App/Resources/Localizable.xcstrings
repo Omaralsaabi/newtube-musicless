@@ -616,6 +616,39 @@
         }
       }
     },
+    "On this iPhone": {
+      "comment": "iOS only",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "على هذا الـ iPhone"
+          }
+        }
+      }
+    },
+    "On this iPhone · %@": {
+      "comment": "iOS only",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "على هذا الـ iPhone · %@"
+          }
+        }
+      }
+    },
+    "Open a file": {
+      "comment": "Android: mobile_open_file",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "فتح ملف من الهاتف"
+          }
+        }
+      }
+    },
     "Opens the channel": {
       "comment": "iOS only",
       "localizations": {

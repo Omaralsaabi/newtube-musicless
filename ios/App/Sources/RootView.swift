@@ -1,6 +1,7 @@
 import MediaPipeline
 import MusiclessCore
 import SwiftUI
+import UniformTypeIdentifiers
 import YouTubeEngine
 
 /// The app's tabs (PRD FR-18): Subscriptions first, Search, You. You holds the debug screens until
@@ -8,6 +9,7 @@ import YouTubeEngine
 struct RootView: View {
     @Environment(ModelStore.self) private var models
     @State private var tab: Tab = .subscriptions
+    @State private var openingFile = false
     @State private var path: [Route] = []
     @State private var searchPath: [BrowseRoute] = []
     @State private var subscriptionsPath: [BrowseRoute] = []
@@ -28,6 +30,8 @@ struct RootView: View {
         /// US-012; `id` plays at once (from `--voices`).
         case voices(id: String?, at: Double)
         case settings
+        /// A local file (US-027).
+        case file(URL)
     }
 
     var body: some View {
@@ -51,6 +55,19 @@ struct RootView: View {
                 .tag(Tab.you)
         }
         .onAppear(perform: launch)
+        // "Open in" from Files and other apps (CFBundleDocumentTypes), and the document picker.
+        .onOpenURL { url in
+            guard url.isFileURL else { return }
+            AppLog.player.info("local open-in file=\(url.pathExtension)")
+            tab = .you
+            path = [.file(url)]
+        }
+        .fileImporter(isPresented: $openingFile, allowedContentTypes: [.movie, .audio]) { result in
+            if case .success(let url) = result {
+                tab = .you
+                path.append(.file(url))
+            }
+        }
         .onChange(of: path) { _, _ in stopPlayerIfHidden() }
         .onChange(of: searchPath) { _, _ in stopPlayerIfHidden() }
         .onChange(of: subscriptionsPath) { _, _ in stopPlayerIfHidden() }
@@ -73,7 +90,12 @@ struct RootView: View {
     }
 
     private func stopPlayerIfHidden() {
-        let showsVoices = path.contains { if case .voices = $0 { true } else { false } }
+        let showsVoices = path.contains {
+            switch $0 {
+            case .voices, .file: true
+            default: false
+            }
+        }
         let showsWatch = [searchPath, subscriptionsPath, homePath].contains { stack in
             stack.contains { if case .watch = $0 { true } else { false } }
         }
@@ -85,6 +107,11 @@ struct RootView: View {
             List {
                 Section {
                     AccountRow(account: AccountModel.shared)
+                }
+                Section {
+                    Button { openingFile = true } label: {
+                        Label("Open a file", systemImage: "folder")
+                    }
                 }
                 Section {
                     NavigationLink(value: Route.settings) {
@@ -100,6 +127,8 @@ struct RootView: View {
                     BenchmarkView(benchmark: SeparationBenchmark(models: models), autoStart: autoStart)
                 case .settings:
                     SettingsView(player: watch)
+                case .file(let url):
+                    if let watch { LocalFileView(url: url, player: watch) }
                 case .voices(let id, let at):
                     if let watch {
                         let arguments = ProcessInfo.processInfo.arguments
@@ -195,6 +224,10 @@ struct RootView: View {
             searchPath = [.watch(videoID: arguments[index + 1])]
         }
         if path.isEmpty, arguments.contains("--settings") { path = [.settings] }
+        // `--file <name>` (debug): a file in the app's Documents folder (Files → On My iPhone).
+        if path.isEmpty, let index = arguments.firstIndex(of: "--file"), arguments.indices.contains(index + 1) {
+            path = [.file(URL.documentsDirectory.appending(path: arguments[index + 1]))]
+        }
         if !path.isEmpty || arguments.contains("--sign-in") { tab = .you }
     }
 }

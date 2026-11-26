@@ -104,6 +104,11 @@ xcrun devicectl device process launch --device "$DEVICE_ID" --terminate-existing
   debug watch screen (its checks: `Debug/PlayerChecks.swift`). `--channel <id>` and `--playlist <id>`
   (US-021) open those pages.
 - `--settings` (US-024) opens Settings (the debug screens are in its Debug section now).
+- `--file <name>` (US-027) plays a file from the app's Documents (`LocalPlayerEngine`). Put one there
+  with `xcrun devicectl device copy to --device "$DEVICE_ID" --domain-type appDataContainer
+  --domain-identifier "$BUNDLE_ID" --source <file> --destination Documents/<name>` (simulator:
+  `simctl get_app_container … data`). `ffmpeg` can mux a test pattern with
+  `ios/.fixtures/separation/clip.wav` (speech over music).
 - Arabic (US-025): `ios/tools/import_android_strings.py` rebuilds `App/Resources/Localizable.xcstrings`
   from Android's strings after a build (`--check` lists keys without Arabic; iOS-only Arabic lives in
   `ios/tools/strings_ios_only_ar.json`). Run it after adding a user-facing string. To launch in

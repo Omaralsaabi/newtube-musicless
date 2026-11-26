@@ -50,7 +50,10 @@ final class PlayerModel: SystemPlaybackTarget {
 
     @ObservationIgnored private let models: ModelStore
     // Internal, not private: the debug checks (Debug/PlayerChecks.swift) drive them.
-    @ObservationIgnored var engine: PlayerEngine?
+    /// The YouTube engine, or a local file's (US-027).
+    @ObservationIgnored var engine: (any PlaybackEngine)?
+    /// A local file's security-scoped access, released on stop.
+    @ObservationIgnored private var localFile: URL?
     @ObservationIgnored var playing: PlayingFiles?
     @ObservationIgnored var pip: PictureInPicture?
     @ObservationIgnored private var nowPlayingTitle = ""
@@ -283,7 +286,7 @@ final class PlayerModel: SystemPlaybackTarget {
     }
 
     func setQuality(_ option: VideoOption) async {
-        guard let engine, option != quality else { return }
+        guard let engine = engine as? PlayerEngine, option != quality else { return }
         quality = option
         AppLog.player.info("voices quality=\(option.label) itag=\(option.itag)")
         do {
@@ -318,6 +321,60 @@ final class PlayerModel: SystemPlaybackTarget {
         qualities = []
         quality = nil
         videoID = nil
+        if let localFile {
+            localFile.stopAccessingSecurityScopedResource()
+            self.localFile = nil
+        }
+    }
+
+    /// A local file (US-027): Files, the document picker or another app's "Open in". The same
+    /// Separator, renderers, Now Playing and PiP as a YouTube video; no history, no quality.
+    func playFile(_ url: URL) async {
+        await stop(reason: "new file")
+        generation += 1
+        let token = generation
+        error = nil
+        resolving = true
+        let name = url.deletingPathExtension().lastPathComponent
+        title = name
+        removeMusic = AppSettings.shared.removeMusic
+        let scoped = url.startAccessingSecurityScopedResource()
+        if scoped { localFile = url }
+        AppLog.player.info("local tap file=\(url.pathExtension) removeMusic=\(removeMusic) scoped=\(scoped)")
+        do {
+            let hasVideo = !(try await AVURLAsset(url: url).loadTracks(withMediaType: .video)).isEmpty
+            guard token == generation else { return }
+            detail = url.pathExtension.uppercased()
+            try PlaybackAudioSession.shared.activate()
+            let runtime = PlaybackServices.shared.runtime(models: models)
+            let separator = Separator(backend: runtime, log: { line in
+                AppLog.musicless.info(line.hasPrefix("Window pipeline") ? line + " appState=\(AppActivity.logValue)" : line)
+            })
+            var output: LocalPlayerEngine.VideoOutput?
+            if hasVideo {
+                let layer = AVSampleBufferDisplayLayer()
+                layer.videoGravity = .resizeAspect
+                layer.backgroundColor = UIColor.black.cgColor
+                self.layer = layer
+                output = LocalPlayerEngine.VideoOutput(renderer: layer.sampleBufferRenderer)
+                pip = PictureInPicture(layer: layer, target: self)
+            }
+            NowPlaying.shared.begin(target: self, title: name, author: String(localized: "On this iPhone"), duration: nil, artwork: nil)
+            let engine = LocalPlayerEngine(
+                url: url, stage: SeparatorStage(separator: separator), video: output,
+                log: { AppLog.player.info($0 + " appState=\(AppActivity.logValue)") },
+                onChange: { [weak self] snapshot in Task { @MainActor in self?.changed(snapshot) } })
+            self.engine = engine
+            if speed != 1 { await engine.setSpeed(speed) }
+            resolving = false
+            startPolling()
+            await engine.start(at: 0, removeMusic: removeMusic, playing: true)
+        } catch {
+            guard token == generation else { return }
+            resolving = false
+            self.error = "\(error)"
+            AppLog.player.info("local failed error=\(error)")
+        }
     }
 
     /// Watch history (US-022): start, pause and end, as VideoStateController.saveState sends them.
