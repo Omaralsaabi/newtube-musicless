@@ -56,6 +56,8 @@ struct WatchView: View {
     @State private var descriptionExpanded = false
     /// The comments token while the comments sheet shows.
     @State private var comments: String?
+    @State private var choosingQuality = false
+    @State private var downloadStarted = false
     private let settings = AppSettings.shared
 
     init(videoID: String, player: PlayerModel, path: Binding<[BrowseRoute]>) {
@@ -89,7 +91,19 @@ struct WatchView: View {
         .sheet(item: Binding(get: { comments.map(CommentsToken.init) }, set: { comments = $0?.id })) { token in
             CommentsSheet(token: token.id, count: model.next?.commentCount)
         }
+        .alert("Download started", isPresented: $downloadStarted) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Follow it in You → Downloads. The file also appears in Files on this iPhone.")
+        }
         .onAppear {
+            // `--download` (debug): download this video at the default quality once the details are in.
+            if ProcessInfo.processInfo.arguments.contains("--download") {
+                Task {
+                    while model.next == nil { try? await Task.sleep(for: .milliseconds(200)) }
+                    if let next = model.next { startDownload(next, option: nil) }
+                }
+            }
             // `--comments` (debug): the comments sheet once the details are in.
             if ProcessInfo.processInfo.arguments.contains("--comments") {
                 Task {
@@ -110,6 +124,7 @@ struct WatchView: View {
                 let line = [next.shortViews ?? next.views, next.age ?? next.published].compactMap { $0 }.joined(separator: " · ")
                 if !line.isEmpty { Text(line).font(.footnote).foregroundStyle(.secondary) }
                 channelRow(next)
+                downloadButton(next)
                 description(next)
                 commentsRow(next)
             } else if model.failed {
@@ -172,6 +187,30 @@ struct WatchView: View {
             .accessibilityAddTraits(.isButton)
             .accessibilityHint(descriptionExpanded ? "Collapses the description" : "Expands the description")
         }
+    }
+
+    /// Download (US-028): pick a quality (the player's list), then it runs from You → Downloads.
+    @ViewBuilder private func downloadButton(_ next: WatchNext) -> some View {
+        Button { choosingQuality = true } label: {
+            Label(AppSettings.shared.removeMusic ? String(localized: "Download without music") : String(localized: "Download"),
+                  systemImage: "arrow.down.circle")
+                .font(.subheadline.weight(.semibold))
+        }
+        .buttonStyle(.bordered)
+        .confirmationDialog("Quality", isPresented: $choosingQuality, titleVisibility: .visible) {
+            ForEach(player.videoID == model.videoID ? player.qualities : []) { option in
+                Button(option.label) { startDownload(next, option: option) }
+            }
+            if player.videoID != model.videoID || player.qualities.isEmpty {
+                Button("Best") { startDownload(next, option: nil) }
+            }
+        }
+    }
+
+    private func startDownload(_ next: WatchNext, option: VideoOption?) {
+        DownloadStore.shared.start(videoID: model.videoID, title: next.title, author: next.channel ?? "",
+                                   thumbnail: URL(string: "https://i.ytimg.com/vi/\(model.videoID)/hqdefault.jpg"), option: option)
+        downloadStarted = true
     }
 
     /// The comments (US-026): a row that opens them in a sheet.

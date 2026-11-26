@@ -104,6 +104,10 @@ xcrun devicectl device process launch --device "$DEVICE_ID" --terminate-existing
   debug watch screen (its checks: `Debug/PlayerChecks.swift`). `--channel <id>` and `--playlist <id>`
   (US-021) open those pages.
 - `--settings` (US-024) opens Settings (the debug screens are in its Debug section now).
+- `--watch <id> --download` (US-028) downloads that video at "Best" (with Remove music on, the
+  music is removed); `--downloads` opens You → Downloads. Lines: `download …`, `download
+  background-task …` (iOS 26 runs it as a `BGContinuedProcessingTask`; the simulator refuses it),
+  and `Window pipeline … offline=y`. Code: `App/Sources/Downloads/` (DECISIONS D59).
 - `--file <name>` (US-027) plays a file from the app's Documents (`LocalPlayerEngine`). Put one there
   with `xcrun devicectl device copy to --device "$DEVICE_ID" --domain-type appDataContainer
   --domain-identifier "$BUNDLE_ID" --source <file> --destination Documents/<name>` (simulator:

@@ -171,8 +171,8 @@ final class PlayerModel: SystemPlaybackTarget {
             detail = [media.author, "itag \(media.audio.file.itag)"].joined(separator: " · ")
             playerMs = media.playerMs
             try PlaybackAudioSession.shared.activate()
-            let runtime = PlaybackServices.shared.runtime(models: models)
-            let separator = Separator(backend: runtime, log: { line in
+            let backend = PlaybackServices.shared.playerBackend(models: models)
+            let separator = Separator(backend: backend, log: { line in
                 AppLog.musicless.info(line.hasPrefix("Window pipeline") ? line + " appState=\(AppActivity.logValue)" : line)
             })
             var video: VideoInput?
@@ -329,7 +329,8 @@ final class PlayerModel: SystemPlaybackTarget {
 
     /// A local file (US-027): Files, the document picker or another app's "Open in". The same
     /// Separator, renderers, Now Playing and PiP as a YouTube video; no history, no quality.
-    func playFile(_ url: URL) async {
+    /// - voicesOnly: a download saved without music: played as it is (pass-through).
+    func playFile(_ url: URL, voicesOnly: Bool = false) async {
         await stop(reason: "new file")
         generation += 1
         let token = generation
@@ -337,7 +338,7 @@ final class PlayerModel: SystemPlaybackTarget {
         resolving = true
         let name = url.deletingPathExtension().lastPathComponent
         title = name
-        removeMusic = AppSettings.shared.removeMusic
+        removeMusic = voicesOnly ? false : AppSettings.shared.removeMusic
         let scoped = url.startAccessingSecurityScopedResource()
         if scoped { localFile = url }
         AppLog.player.info("local tap file=\(url.pathExtension) removeMusic=\(removeMusic) scoped=\(scoped)")
@@ -346,8 +347,8 @@ final class PlayerModel: SystemPlaybackTarget {
             guard token == generation else { return }
             detail = url.pathExtension.uppercased()
             try PlaybackAudioSession.shared.activate()
-            let runtime = PlaybackServices.shared.runtime(models: models)
-            let separator = Separator(backend: runtime, log: { line in
+            let backend = PlaybackServices.shared.playerBackend(models: models)
+            let separator = Separator(backend: backend, log: { line in
                 AppLog.musicless.info(line.hasPrefix("Window pipeline") ? line + " appState=\(AppActivity.logValue)" : line)
             })
             var output: LocalPlayerEngine.VideoOutput?

@@ -4,6 +4,7 @@ import SwiftUI
 /// Remove music switch (also in the player's menu).
 struct LocalFileView: View {
     let url: URL
+    var voicesOnly = false
     let player: PlayerModel
 
     var body: some View {
@@ -18,15 +19,19 @@ struct LocalFileView: View {
                         .foregroundStyle(.secondary)
                 }
                 .listRowSeparator(.hidden)
-                Toggle(isOn: Binding(get: { player.removeMusic }, set: { on in Task { await player.setRemoveMusic(on) } })) {
-                    Label("Remove music", systemImage: "music.note.slash")
+                if voicesOnly {
+                    Label("Saved without music", systemImage: "music.note.slash").foregroundStyle(.secondary)
+                } else {
+                    Toggle(isOn: Binding(get: { player.removeMusic }, set: { on in Task { await player.setRemoveMusic(on) } })) {
+                        Label("Remove music", systemImage: "music.note.slash")
+                    }
                 }
             }
             .listStyle(.plain)
         }
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(player.fullScreen ? .hidden : .visible, for: .navigationBar)
-        .task { await player.playFile(url) }
+        .task { await player.playFile(url, voicesOnly: voicesOnly) }
         .fullScreenCover(isPresented: Binding(get: { player.fullScreen }, set: { player.fullScreen = $0 })) {
             if let layer = player.layer { FullScreenVideo(watch: player, layer: layer) }
         }

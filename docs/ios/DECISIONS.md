@@ -1190,6 +1190,66 @@ Personal Team test (Q8, D15) moves with them: there is still no paid-only capabi
   - played to `local ended at=30.05` (the soundtrack's end) with no underrun.
 - On the simulator the picture and "Preparing voices…" show over the test pattern.
 
+### D59. Download with music removed — US-028
+
+- **Starting one:** the watch page's "Download" button ("Download without music" when Remove
+  music is on) shows the player's quality list, or "Best" before the player has one. Downloads
+  run one at a time and are listed in You → Downloads (progress, swipe to cancel, retry or
+  delete). The list is saved in Application Support. A download the app was closed during is
+  marked "Interrupted. Try again." at the next launch.
+  - `--download` (with `--watch <id>`) downloads that video at "Best" once its details are in;
+    `--downloads` opens the list.
+- **Fetching: the media fetcher, not a background `URLSession`** (the PRD's wording).
+  - Each file is read in 4 MB ranges through playback's `MediaFetcher`, so the `Range:` header
+    and the 403 recovery are the tested ones, unchanged.
+  - A 403 resolves the video again. When the new answer has the same file (itag, lmt, length),
+    the fetcher repoints to its new URL and carries on at the same offset. When it has another
+    encode, that file starts over. At most 3 recoveries per file; the refused URL is never asked
+    again.
+  - Leaving the app is covered by the iOS 26 background task below, not by background
+    transfers. A background session would need a second, delegate-based fetch path with its own
+    403 handling, and it can't run the separation anyway.
+- **Remove music:** `OfflineSeparator` decodes the audio with `AVAssetReader` (Float32, 44.1 kHz
+  stereo), runs it through the same `Separator`, and writes AAC-LC 128 kb/s with `AVAssetWriter`.
+  An `AVAssetExportSession` passthrough then muxes it with the picture into one MP4 in Documents
+  (Files → On My iPhone → NewTube Musicless; `UIFileSharingEnabled` and
+  `LSSupportsOpeningDocumentsInPlace` were already on).
+  - **The failure rule:** a silence window from the separator (a failed window) cancels the
+    writer and fails the download with "Couldn't remove the music". No file is written.
+  - The item is marked `voicesOnly`. Playing it opens the local-file screen with Remove music
+    off (pass-through) and "Saved without music" in place of the switch.
+- **The model gate (Android's rule):** player and download share the one `ModelRuntime` through
+  `ModelGate`. A player window goes straight in; a download window waits until no player window
+  is in flight.
+  - iPhone, with "Me at the zoo" playing on the watch page while it downloaded: the download's
+    windows queued 308–693 ms (simulator, nothing playing: 35–123 ms).
+- **iOS 26:** each download is a `BGContinuedProcessingTask` (`processing` background mode;
+  permitted identifier `$(PRODUCT_BUNDLE_IDENTIFIER).download.*`; registered per download with
+  strategy `.queue`). Progress goes to the system UI: fetching is 0–60 %, removing the music
+  60–95 %, saving the rest. When the task expires, the download is cancelled.
+  - iPhone (iOS 26): `background-task submitted registered=true`, then `background-task running`.
+  - The simulator refuses it (`BGTaskSchedulerErrorDomain` code 1), and the download runs in the
+    foreground. Before iOS 26 it also runs in the foreground; the keep-alive fallback is US-029.
+- **AVFoundation reads YouTube's fragmented video files at twice their length.** The track range
+  runs on with the last frame held:
+  - "Me at the zoo": ffprobe 18.93 s, `AVAssetTrack.timeRange` 37.87 s;
+  - Big Buck Bunny: 634.57 s → 1269.13 s;
+  - dQw4w9WgXcQ: 213.04 s → 426.08 s.
+  - The samples themselves are right: the last one is at 18.867 s and lasts 0.067 s. A
+    passthrough export copied the frozen tail into the file (37.9 s of picture under 19 s of
+    sound).
+  - So `Muxer.mediaRange` ends each track at its last sample: the latest presentation end
+    among the last 32 samples in decode order (B-frames reorder). Output: 19.00 s of picture.
+  - The AAC files (itag 140) read correctly, and so does the separator's output.
+- **Checked:**
+  - simulator: 19.02 s of AAC-LC and 19.00 s of H.264 in one MP4, voices at a mean of
+    -28.9 dB and a peak of -9.6 dB;
+  - iPhone: the same file, copied off with `devicectl device copy from`: same durations and
+    levels, voices in 1.7 s;
+  - the Remove-music-off mux, on the Mac: 19.06 s and 19.00 s.
+  - Not yet exercised on a device: a media 403 in the middle of a download, and a download long
+    enough to leave the app during it.
+
 ## Settled `[verify]` items
 
 | PRD item | Result | Evidence |

@@ -83,6 +83,20 @@ final class PlaybackServices {
         }
     }
 
+    /// The player's windows first, a download's in the gaps (US-028).
+    let modelGate = ModelGate()
+    /// The voice models, handed over at launch (downloads need them without a player).
+    var models: ModelStore?
+
+    func playerBackend(models: ModelStore) -> GatedBackend {
+        GatedBackend(runtime: runtime(models: models), gate: modelGate, lane: .player)
+    }
+
+    func downloadBackend() throws -> GatedBackend {
+        guard let models else { throw DownloadError(description: "the voice models aren't available") }
+        return GatedBackend(runtime: runtime(models: models), gate: modelGate, lane: .download)
+    }
+
     func runtime(models: ModelStore) -> ModelRuntime {
         if let runtime { return runtime }
         let made = ModelRuntime(models: models.modelURLs, awaitModels: { try await models.awaitReady() },

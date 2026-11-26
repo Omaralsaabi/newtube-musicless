@@ -132,6 +132,17 @@
         }
       }
     },
+    "Best": {
+      "comment": "iOS only",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "الأفضل"
+          }
+        }
+      }
+    },
     "Cancel": {
       "comment": "Android: mobile_comments_delete_cancel",
       "localizations": {
@@ -139,6 +150,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "إلغاء"
+          }
+        }
+      }
+    },
+    "Cancelled": {
+      "comment": "iOS only",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تم الإلغاء"
           }
         }
       }
@@ -330,6 +352,17 @@
         }
       }
     },
+    "Couldn't remove the music": {
+      "comment": "iOS only",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تعذّرت إزالة الموسيقى"
+          }
+        }
+      }
+    },
     "Couldn't sign in. Check your connection and try again.": {
       "comment": "iOS only",
       "localizations": {
@@ -348,6 +381,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "تصحيح الأخطاء"
+          }
+        }
+      }
+    },
+    "Delete": {
+      "comment": "Android: mobile_comments_delete",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "حذف"
           }
         }
       }
@@ -385,6 +429,28 @@
         }
       }
     },
+    "Download failed. Try again.": {
+      "comment": "iOS only",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "فشل التنزيل. حاول مرة أخرى."
+          }
+        }
+      }
+    },
+    "Download started": {
+      "comment": "Android: mobile_download_started",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "بدأ التنزيل"
+          }
+        }
+      }
+    },
     "Download the voice models again?": {
       "comment": "iOS only",
       "localizations": {
@@ -392,6 +458,50 @@
           "stringUnit": {
             "state": "translated",
             "value": "هل تريد تنزيل نماذج الصوت مرة أخرى؟"
+          }
+        }
+      }
+    },
+    "Download without music": {
+      "comment": "iOS only",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تنزيل بدون موسيقى"
+          }
+        }
+      }
+    },
+    "Downloaded": {
+      "comment": "Android: mobile_download_done",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تم التنزيل"
+          }
+        }
+      }
+    },
+    "Downloaded without music": {
+      "comment": "iOS only",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تم التنزيل بدون موسيقى"
+          }
+        }
+      }
+    },
+    "Downloading": {
+      "comment": "Android: mobile_download_badge_downloading",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "جارٍ التنزيل"
           }
         }
       }
@@ -414,6 +524,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "جارٍ تنزيل نماذج الصوت… %lld%%"
+          }
+        }
+      }
+    },
+    "Downloads": {
+      "comment": "Android: mobile_download_channel_name",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "التنزيلات"
           }
         }
       }
@@ -462,6 +583,17 @@
         }
       }
     },
+    "Follow it in You → Downloads. The file also appears in Files on this iPhone.": {
+      "comment": "iOS only",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تابِعه في أنت ← التنزيلات. يظهر الملف أيضًا في تطبيق الملفات على هذا الـ iPhone."
+          }
+        }
+      }
+    },
     "Forward 10 seconds": {
       "comment": "iOS only",
       "localizations": {
@@ -502,6 +634,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "الصفحة الرئيسية"
+          }
+        }
+      }
+    },
+    "Interrupted. Try again.": {
+      "comment": "iOS only",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "توقّف التنزيل. حاول مرة أخرى."
           }
         }
       }
@@ -601,6 +744,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "لا يوجد شيء هنا بعد."
+          }
+        }
+      }
+    },
+    "OK": {
+      "comment": "iOS only",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "حسنًا"
           }
         }
       }
@@ -825,6 +979,17 @@
         }
       }
     },
+    "Removing music": {
+      "comment": "iOS only",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "جارٍ إزالة الموسيقى"
+          }
+        }
+      }
+    },
     "Replay": {
       "comment": "Android: mobile_player_replay",
       "localizations": {
@@ -898,6 +1063,28 @@
           "stringUnit": {
             "state": "translated",
             "value": "التشغيل والشاشة مقفلة"
+          }
+        }
+      }
+    },
+    "Saved without music": {
+      "comment": "iOS only",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "محفوظ بدون موسيقى"
+          }
+        }
+      }
+    },
+    "Saving": {
+      "comment": "Android: mobile_settings_menu_save",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "الحفظ"
           }
         }
       }
@@ -1243,6 +1430,17 @@
         }
       }
     },
+    "Videos you download appear here, and in Files on this iPhone.": {
+      "comment": "iOS only",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تظهر هنا الفيديوهات التي تنزّلها، وفي تطبيق الملفات على هذا الـ iPhone."
+          }
+        }
+      }
+    },
     "Voice models": {
       "comment": "iOS only",
       "localizations": {
@@ -1272,6 +1470,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "في انتظار موافقتك…"
+          }
+        }
+      }
+    },
+    "Waiting to download": {
+      "comment": "Android: mobile_download_state_queued",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "في انتظار التنزيل"
           }
         }
       }

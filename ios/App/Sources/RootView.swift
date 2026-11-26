@@ -30,8 +30,9 @@ struct RootView: View {
         /// US-012; `id` plays at once (from `--voices`).
         case voices(id: String?, at: Double)
         case settings
-        /// A local file (US-027).
-        case file(URL)
+        /// A local file (US-027); `voicesOnly`: a download saved without music.
+        case file(URL, voicesOnly: Bool = false)
+        case downloads
     }
 
     var body: some View {
@@ -109,6 +110,9 @@ struct RootView: View {
                     AccountRow(account: AccountModel.shared)
                 }
                 Section {
+                    NavigationLink(value: Route.downloads) {
+                        Label("Downloads", systemImage: "arrow.down.circle")
+                    }
                     Button { openingFile = true } label: {
                         Label("Open a file", systemImage: "folder")
                     }
@@ -127,8 +131,10 @@ struct RootView: View {
                     BenchmarkView(benchmark: SeparationBenchmark(models: models), autoStart: autoStart)
                 case .settings:
                     SettingsView(player: watch)
-                case .file(let url):
-                    if let watch { LocalFileView(url: url, player: watch) }
+                case .file(let url, let voicesOnly):
+                    if let watch { LocalFileView(url: url, voicesOnly: voicesOnly, player: watch) }
+                case .downloads:
+                    DownloadsView(path: $path)
                 case .voices(let id, let at):
                     if let watch {
                         let arguments = ProcessInfo.processInfo.arguments
@@ -224,6 +230,8 @@ struct RootView: View {
             searchPath = [.watch(videoID: arguments[index + 1])]
         }
         if path.isEmpty, arguments.contains("--settings") { path = [.settings] }
+        if path.isEmpty, arguments.contains("--downloads") { path = [.downloads] }
+        PlaybackServices.shared.models = models
         // `--file <name>` (debug): a file in the app's Documents folder (Files → On My iPhone).
         if path.isEmpty, let index = arguments.firstIndex(of: "--file"), arguments.indices.contains(index + 1) {
             path = [.file(URL.documentsDirectory.appending(path: arguments[index + 1]))]
