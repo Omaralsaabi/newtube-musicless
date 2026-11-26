@@ -848,9 +848,15 @@ Personal Team test (Q8, D15) moves with them: there is still no paid-only capabi
     30 s landed at 31.0 s.
   - Full screen measured 812×375 landscape, and portrait again after closing with the layer back
     inline.
-  - PiP fails because the simulator doesn't support it. **Not yet run on the iPhone:** PiP, and 2× on
-    the phone. The phone was locked and then unavailable when the story was committed; the check
-    stays open until they run there.
+  - PiP fails because the simulator doesn't support it.
+- **`--system-check` on the iPhone (run after the commit; the phone was locked, then unavailable):
+  12 of 12 pass.**
+  - Speeds measured exactly 0.5, 1.5, 2 and 1, with no hold at 2×.
+  - Now Playing within 0.08 s of the engine; skip went 41.2 → 52.6 s; scrub to 30 s landed at 31.5 s.
+  - Full screen measured 812×375 landscape, then portrait with the layer back inline.
+  - PiP started on its own as the app left for Files. While it ran the picture kept decoding:
+    1.25–2.25 s of frames queued ahead, and the playhead moved 8.2 s in 8 s. It stopped when the app
+    came back.
 
 ## Settled `[verify]` items
 
