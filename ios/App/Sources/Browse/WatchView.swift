@@ -54,6 +54,8 @@ struct WatchView: View {
     @Binding var path: [BrowseRoute]
     @State private var model: WatchModel
     @State private var descriptionExpanded = false
+    /// The comments token while the comments sheet shows.
+    @State private var comments: String?
     private let settings = AppSettings.shared
 
     init(videoID: String, player: PlayerModel, path: Binding<[BrowseRoute]>) {
@@ -84,6 +86,18 @@ struct WatchView: View {
             if let layer = player.layer { FullScreenVideo(watch: player, layer: layer) }
         }
         .onChange(of: player.fullScreen) { _, on in FullScreenVideo.rotate(on ? .landscape : .portrait) }
+        .sheet(item: Binding(get: { comments.map(CommentsToken.init) }, set: { comments = $0?.id })) { token in
+            CommentsSheet(token: token.id, count: model.next?.commentCount)
+        }
+        .onAppear {
+            // `--comments` (debug): the comments sheet once the details are in.
+            if ProcessInfo.processInfo.arguments.contains("--comments") {
+                Task {
+                    while model.next == nil { try? await Task.sleep(for: .milliseconds(200)) }
+                    comments = model.next?.commentsToken
+                }
+            }
+        }
     }
 
     @ViewBuilder private var details: some View {
@@ -97,6 +111,7 @@ struct WatchView: View {
                 if !line.isEmpty { Text(line).font(.footnote).foregroundStyle(.secondary) }
                 channelRow(next)
                 description(next)
+                commentsRow(next)
             } else if model.failed {
                 Button("Couldn't load the details. Try again") { Task { await model.load() } }
                     .font(.footnote)
@@ -159,6 +174,25 @@ struct WatchView: View {
         }
     }
 
+    /// The comments (US-026): a row that opens them in a sheet.
+    @ViewBuilder private func commentsRow(_ next: WatchNext) -> some View {
+        if let token = next.commentsToken {
+            Button { comments = token } label: {
+                HStack {
+                    Label(next.commentCount.map { String(localized: "Comments · \($0)") } ?? String(localized: "Comments"),
+                          systemImage: "text.bubble")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Image(systemName: "chevron.up").font(.footnote).foregroundStyle(.tertiary)
+                }
+                .padding(12)
+                .background(Color(white: 0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
     @ViewBuilder private var upNext: some View {
         Section {
             ForEach(model.related.items) { item in
@@ -181,4 +215,8 @@ struct WatchView: View {
             }
         }
     }
+}
+
+struct CommentsToken: Identifiable {
+    let id: String
 }

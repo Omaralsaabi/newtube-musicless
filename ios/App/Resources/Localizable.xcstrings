@@ -23,6 +23,71 @@
         }
       }
     },
+    "%lld replies": {
+      "comment": "Android: mobile_comments_replies (plurals)",
+      "localizations": {
+        "ar": {
+          "variations": {
+            "plural": {
+              "few": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld ردود"
+                }
+              },
+              "many": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld ردًا"
+                }
+              },
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "رد واحد"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld رد"
+                }
+              },
+              "two": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "ردّان"
+                }
+              },
+              "zero": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "لا توجد ردود"
+                }
+              }
+            }
+          }
+        },
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld reply"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld replies"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "About": {
       "comment": "Android: mobile_settings_about",
       "localizations": {
@@ -133,6 +198,28 @@
         }
       }
     },
+    "Comments": {
+      "comment": "Android: mobile_comments_entry",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "التعليقات"
+          }
+        }
+      }
+    },
+    "Comments · %@": {
+      "comment": "iOS only",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "التعليقات · %@"
+          }
+        }
+      }
+    },
     "Commit": {
       "comment": "iOS only",
       "localizations": {
@@ -184,6 +271,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "نسخ التقرير"
+          }
+        }
+      }
+    },
+    "Couldn't load comments. Try again": {
+      "comment": "iOS only",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تعذّر تحميل التعليقات. حاول مرة أخرى"
           }
         }
       }
@@ -261,6 +359,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "فحص الجهاز"
+          }
+        }
+      }
+    },
+    "Done": {
+      "comment": "Android: mobile_add_device_done",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تم"
           }
         }
       }
@@ -459,6 +568,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "إزالة الموسيقى"
+          }
+        }
+      }
+    },
+    "No comments": {
+      "comment": "iOS only",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لا توجد تعليقات"
           }
         }
       }
@@ -679,6 +799,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "إعادة التشغيل"
+          }
+        }
+      }
+    },
+    "Replies": {
+      "comment": "Android: mobile_comments_replies_title",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "الردود"
           }
         }
       }

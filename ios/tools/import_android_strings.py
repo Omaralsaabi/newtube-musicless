@@ -46,6 +46,22 @@ def load(path):
     return {s.get('name'): ''.join(s.itertext()) for s in root.iter('string') if s.get('translatable') != 'false'}
 
 
+def load_plurals(path):
+    """name -> {quantity: text} of the <plurals> of an Android resource file."""
+    try:
+        root = ET.parse(os.path.join(ROOT, path)).getroot()
+    except (OSError, ET.ParseError):
+        return {}
+    return {p.get('name'): {item.get('quantity'): ''.join(item.itertext()) for item in p.iter('item')}
+            for p in root.iter('plurals')}
+
+
+def plural_units(forms, key):
+    """{quantity: stringUnit} with Android's placeholders as the key's specifiers."""
+    return {quantity: {'stringUnit': {'state': 'translated', 'value': ios_placeholders(android_text(text), key)}}
+            for quantity, text in forms.items()}
+
+
 def android_text(text):
     """Android escapes out, placeholders as iOS's."""
     text = text.replace("\\'", "'").replace('\\"', '"').replace('\\n', '\n').replace('\\@', '@').strip()
@@ -96,17 +112,30 @@ def main():
     if not keys:
         sys.exit('no .stringsdata under %s: build the app first' % args.build)
 
-    index = {}
+    index, plurals = {}, {}
     for english_file, arabic_file in SOURCES:
         english, arabic = load(english_file), load(arabic_file)
         for name, text in english.items():
             if name in arabic:
                 index.setdefault(normalize(android_text(text)), (name, android_text(arabic[name])))
+        # <plurals>, matched by their English "other" form: both languages' forms become variations.
+        english_plurals, arabic_plurals = load_plurals(english_file), load_plurals(arabic_file)
+        for name, forms in english_plurals.items():
+            if name in arabic_plurals and 'other' in forms:
+                plurals.setdefault(normalize(android_text(forms['other'])), (name, forms, arabic_plurals[name]))
     with open(IOS_ONLY, encoding='utf-8') as handle:
         ios_only = json.load(handle)
 
     strings, missing, from_android = {}, [], 0
     for key in sorted(keys, key=str.lower):
+        plural = plurals.get(normalize(key))
+        if plural:
+            name, english_forms, arabic_forms = plural
+            strings[key] = {'comment': 'Android: %s (plurals)' % name, 'localizations': {
+                'en': {'variations': {'plural': plural_units(english_forms, key)}},
+                'ar': {'variations': {'plural': plural_units(arabic_forms, key)}}}}
+            from_android += 1
+            continue
         match = index.get(normalize(key))
         if match:
             name, arabic = match

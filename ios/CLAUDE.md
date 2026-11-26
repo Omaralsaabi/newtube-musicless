@@ -100,7 +100,7 @@ xcrun devicectl device process launch --device "$DEVICE_ID" --terminate-existing
   (until Arabic is declared, US-025). Simulator screenshots go to `ios/build/screenshots/US-0NN/`
   (gitignored) for the PR.
 - `--watch <id>` (US-020): the watch page for a video; `--up-next` shows the related list for that
-  launch without saving the setting. The player is `Playback/PlayerModel.swift`, shared with the
+  launch without saving the setting; `--comments` (US-026) opens its comments sheet. The player is `Playback/PlayerModel.swift`, shared with the
   debug watch screen (its checks: `Debug/PlayerChecks.swift`). `--channel <id>` and `--playlist <id>`
   (US-021) open those pages.
 - `--settings` (US-024) opens Settings (the debug screens are in its Debug section now).

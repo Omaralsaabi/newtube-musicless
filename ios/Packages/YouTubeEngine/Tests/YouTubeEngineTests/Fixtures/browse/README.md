@@ -20,3 +20,8 @@ names). `BrowseParserTests` reads them; `fixturesCarryNoAddressOrVisitor` re-che
 - `playlist_open_movies.json`: `/browse` for `VLPL6B3937A5D230E335` (`twoColumnRenderer`:
   `entityMetadataRenderer` and `playlistVideoListRenderer`).
 - `home_signed_out.json`: `/browse` `default` (Home) without an account: a search bar only.
+- `comments_bbb.json`: the comments panel's first page (`/next` with its token): an
+  `itemSectionContinuation` of `commentThreadRenderer`s and a next token. Trimmed to 5; authors,
+  avatars and texts replaced (`@commenterN`, `Comment text N`).
+- `comments_bbb_replies.json`: the first comment's replies (its `detailViewEndpoint` token): the
+  parent `commentRenderer` first, then replies. Trimmed and scrubbed the same way.

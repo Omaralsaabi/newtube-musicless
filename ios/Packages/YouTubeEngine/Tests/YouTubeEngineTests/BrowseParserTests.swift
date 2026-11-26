@@ -91,6 +91,19 @@ import Testing
         #expect(first.id == "l5OZu-IrXpw" && first.duration == "6:31" && first.badges == ["4K"] && first.details == ["622K views", "6 months ago"])
     }
 
+    @Test func commentsAndRepliesAreRead() throws {
+        let page = try FeedParser.comments(try Self.fixture("comments_bbb"))
+        #expect(page.comments.count == 5 && page.continuation != nil)
+        let first = try #require(page.comments.first)
+        #expect(first.id == "UgzrXz18R8jmeI5i-el4AaABAg" && first.author == "@commenter1")
+        #expect(first.text == "Comment text 1\nsecond line" && first.published == "7 years ago" && first.likes == "2.7K")
+        #expect(first.replyCount == 21 && first.repliesToken?.isEmpty == false)
+        #expect(first.avatar?.absoluteString == "https://yt3.ggpht.com/scrubbed=s88")
+        let replies = try FeedParser.comments(try Self.fixture("comments_bbb_replies"), parentID: first.id)
+        #expect(replies.comments.count == 5, "the parent comment heading the page is dropped")
+        #expect(!replies.comments.contains { $0.id == first.id } && replies.continuation != nil)
+    }
+
     @Test func anAnswerWithoutSectionsIsAnError() {
         #expect(throws: BrowseError.self) { try FeedParser.page(Data(#"{"estimatedResults":"0"}"#.utf8)) }
         #expect(throws: BrowseError.self) { try FeedParser.page(Data("<html>".utf8)) }

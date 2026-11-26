@@ -1131,6 +1131,29 @@ Personal Team test (Q8, D15) moves with them: there is still no paid-only capabi
   sign-in sheet and Settings, all right to left. On the iPhone: a launch in Arabic searching
   (`-AppleLanguages (ar) -AppleLocale ar_SA` after `--`, see ios/CLAUDE.md).
 
+### D57. Comments, read-only — US-026
+
+- **The request:** `/next` with the comments panel's token over the TV client
+  (CommentsApiParams.getCommentsQuery); the first token comes from `/next` (D51).
+- **The answer:** an `itemSectionContinuation` of the classic `commentThreadRenderer` →
+  `commentRenderer` (not view models):
+  - author, avatar, text, age, likes, reply count, a pinned badge;
+  - the replies token in `detailViewEndpoint`;
+  - the next page's token.
+
+  A replies page (`/next` with that token) starts with the parent comment, which the parser drops
+  by id.
+- **On the watch page:** a "Comments · 5.2K" row under the description opens a sheet (medium or
+  large) with the top comments and paging. A comment's "N replies" opens its replies on their own
+  page, the parent on top, also paged. Writing comments is out of scope (US-026 is read-only).
+- **Plurals:** the import tool now reads Android's `<plurals>`, matched by their English "other"
+  form, and writes them as catalog variations. "N replies" takes Android's
+  `mobile_comments_replies`, with all six Arabic forms ("٢١ ردًا" for 21).
+- **Fixtures:** the comments and replies pages, trimmed, with authors, avatars and comment texts
+  replaced (`@commenterN`, `Comment text N`): public, but other people's.
+- **iPhone:** the comments came in 249 ms (20, with a next page) after `/next`. `--comments` opens
+  the sheet once `/next` lands.
+
 ## Settled `[verify]` items
 
 | PRD item | Result | Evidence |
