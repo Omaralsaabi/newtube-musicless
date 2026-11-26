@@ -1296,6 +1296,7 @@ work resumes: US-031 and US-032 open videos through its `musicless://` link.
   - Playback, recovery's replacements, downloads and the debug Opus pick all go through it.
 - The resolver logs `audio-track video=… chosen=ar.4 original=y tracks=ar.4,en-US.10` when
   there is more than one track.
+- Checked on the iPhone by the developer: nphNzcHmowk now plays the Arabic voice.
 - **Not ported yet:** Android's Audio track sheet, for choosing a dub by hand. Every video plays
   its original.
 
