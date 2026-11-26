@@ -13,18 +13,23 @@ public enum FormatSelector {
 
     /// - Parameter maxShortSide: the cap, min(screen, user setting, 1080), applied to the video's
     ///   short side so a vertical 1080x1920 video counts as 1080p.
-    public static func select(_ answer: PlayerAnswer, maxShortSide: Int = maxAVCShortSide) -> Selection {
-        Selection(video: video(answer.adaptiveFormats, maxShortSide: min(maxShortSide, maxAVCShortSide)),
+    /// - Parameter prefer60fps: Settings' "Prefer 60 fps"; off, a ≤ 30 fps file of the same size wins
+    ///   (60 fps only when it's the only one at that size).
+    public static func select(_ answer: PlayerAnswer, maxShortSide: Int = maxAVCShortSide, prefer60fps: Bool = true) -> Selection {
+        Selection(video: video(answer.adaptiveFormats, maxShortSide: min(maxShortSide, maxAVCShortSide), prefer60fps: prefer60fps),
                   audio: audio(answer.adaptiveFormats))
     }
 
-    /// The best `video/mp4` avc1 within the cap at ≤ 60 fps: largest, then smoother, then richer.
-    static func video(_ formats: [PlayerAnswer.Format], maxShortSide: Int) -> PlayerAnswer.Format? {
+    /// The best `video/mp4` avc1 within the cap at ≤ 60 fps: largest, then smoother (or, without
+    /// `prefer60fps`, steadier: ≤ 30 fps first), then richer.
+    static func video(_ formats: [PlayerAnswer.Format], maxShortSide: Int, prefer60fps: Bool = true) -> PlayerAnswer.Format? {
         formats
             .filter { $0.container == "video/mp4" && $0.codecs.hasPrefix("avc1") && $0.hasDelivery
                 && ($0.shortSide ?? .max) <= maxShortSide && ($0.fps ?? 30) <= 60 }
             .max { (left, right) in
-                (left.shortSide ?? 0, left.fps ?? 0, left.bitrate ?? 0) < (right.shortSide ?? 0, right.fps ?? 0, right.bitrate ?? 0)
+                let leftRate = prefer60fps ? (left.fps ?? 0) : -(left.fps ?? 0)
+                let rightRate = prefer60fps ? (right.fps ?? 0) : -(right.fps ?? 0)
+                return (left.shortSide ?? 0, leftRate, left.bitrate ?? 0) < (right.shortSide ?? 0, rightRate, right.bitrate ?? 0)
             }
     }
 

@@ -100,6 +100,18 @@ public final class ModelStore {
 
     public func retry() { start() }
 
+    /// The models' size on disk (the published files), 0 before they're downloaded.
+    public var bytesOnDisk: Int64 { downloader.bytesOnDisk }
+
+    /// Settings' "Re-download": deletes the models (and any partial download) and fetches them
+    /// again. Ignored while a download runs.
+    public func redownload() {
+        guard task == nil else { return }
+        downloader.deleteAll()
+        status = .notDownloaded
+        start()
+    }
+
     /// Starts the download if needed and waits for its outcome.
     public func awaitReady() async throws {
         start()
@@ -135,6 +147,20 @@ struct ModelDownloader: Sendable {
 
     func publishedURL(for file: ModelFile) -> URL {
         configuration.directory.appendingPathComponent("\(file.sha256)-\(file.name)")
+    }
+
+    var bytesOnDisk: Int64 {
+        configuration.files.reduce(0) { total, file in
+            let size = (try? FileManager.default.attributesOfItem(atPath: publishedURL(for: file).path)[.size] as? NSNumber)?.int64Value
+            return total + (size ?? 0)
+        }
+    }
+
+    func deleteAll() {
+        for file in configuration.files {
+            try? FileManager.default.removeItem(at: publishedURL(for: file))
+            try? FileManager.default.removeItem(at: partialURL(for: file))
+        }
     }
 
     /// `progress` gets 0...99 while downloading, in order, only when the value changes.

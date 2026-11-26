@@ -28,6 +28,22 @@ import Testing
         #expect(env.requests().allSatisfy { $0.value(forHTTPHeaderField: "Accept-Encoding") == "identity" })
     }
 
+    @Test func sizeAndRedownloadForSettings() async throws {
+        let env = try StubEnvironment()
+        env.serve { request, file in .ok(env.gzip(file)) }
+        let store = env.store()
+        #expect(store.bytesOnDisk == 0)
+        try await store.awaitReady()
+        let expected = env.files.reduce(Int64(0)) { $0 + Int64(env.payloads[$1.name]?.count ?? 0) }
+        #expect(store.bytesOnDisk == expected)
+        let before = env.requests().count
+        store.redownload()
+        #expect(store.status == .downloading(percent: 0))
+        try await store.awaitReady()
+        #expect(store.status == .ready && store.bytesOnDisk == expected)
+        #expect(env.requests().count == before + env.files.count, "every model fetched again")
+    }
+
     @Test func resumesPartialGzipWith206() async throws {
         let env = try StubEnvironment()
         let vocals = env.files[0], gzip = env.gzip(vocals)

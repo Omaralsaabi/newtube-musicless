@@ -241,9 +241,20 @@ struct ResolveError: Error, CustomStringConvertible {
 
 enum VideoResolver {
     /// Walks the sources (US-015), opens a ciphered winner (US-016), and picks the pair to play.
+    /// Settings' quality choices, read on the main actor.
+    struct Quality: Sendable {
+        var maxShortSide: Int
+        var prefer60fps: Bool
+
+        @MainActor static var current: Quality {
+            Quality(maxShortSide: AppSettings.shared.maxQuality.rawValue, prefer60fps: AppSettings.shared.prefer60fps)
+        }
+    }
+
     @MainActor
     static func media(for videoID: String, withVideo: Bool, synthetic: Bool = false) async throws -> ResolvedMedia {
         let services = PlaybackServices.shared
+        let quality = Quality.current
         let sources = services.sources
         let start = ContinuousClock.now
         let visitor = try? await services.identity.current().visitorData
@@ -278,7 +289,7 @@ enum VideoResolver {
         answer = try await services.cipher.resolve(answer, playerURL: try await services.identity.current().playerURL)
         let solveMs = Int((ContinuousClock.now - solveStart) / .milliseconds(1))
         if solveMs > 1 { AppLog.netPath.info("player-sig video=\(videoID) client=\(walk.client?.id ?? "?") ms=\(solveMs)") }
-        let selection = FormatSelector.select(answer)
+        let selection = FormatSelector.select(answer, maxShortSide: quality.maxShortSide, prefer60fps: quality.prefer60fps)
         guard let audioFormat = selection.audio, let audio = source(audioFormat) else {
             throw ResolveError(description: "no AAC file with ranges in the answer")
         }
@@ -320,6 +331,7 @@ enum VideoResolver {
     /// VISIONOS or ANDROID_VR), a recovery walk asks it last, and the new answer's copies of the
     /// playing files come back for a repoint. Nil when no source serves the same files.
     static func recover(videoID: String, playing: PlayingFiles, refusal: MediaRefusal, synthetic: Bool) async -> RecoveredFiles? {
+        let quality = await Quality.current
         let services = await PlaybackServices.shared
         let start = ContinuousClock.now
         let walls = synthetic ? services.syntheticWalls : services.walls
@@ -366,7 +378,7 @@ enum VideoResolver {
         }
         // No copy of a playing file: switch that track to the answer's own choice (the same itag in
         // another encode first, for the picture), at the playhead.
-        let selection = FormatSelector.select(answer)
+        let selection = FormatSelector.select(answer, maxShortSide: quality.maxShortSide, prefer60fps: quality.prefer60fps)
         func replacement(_ format: PlayerAnswer.Format?) -> RecoveredFiles.Track? {
             guard let format, let source = source(format) else { return nil }
             return .replacement(source, MediaFetcher(file: source.file, log: { AppLog.netPath.info($0) }))

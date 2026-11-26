@@ -39,7 +39,8 @@ final class PlayerModel: SystemPlaybackTarget {
     private(set) var layer: AVSampleBufferDisplayLayer?
     private(set) var qualities: [VideoOption] = []
     private(set) var quality: VideoOption?
-    var removeMusic = true
+    /// Music removal: the setting (the player menu's switch changes it, as on Android).
+    var removeMusic = AppSettings.shared.removeMusic
     /// Plays the voices without the picture (US-012's mode).
     var audioOnly = false
 
@@ -94,6 +95,11 @@ final class PlayerModel: SystemPlaybackTarget {
                             AppLog.player.info("video stays on (pip) appState=\(AppActivity.logValue)")
                         } else {
                             await engine.setVideoActive(false)
+                            // Background play off (Settings): pause, unless PiP keeps it on screen.
+                            if !AppSettings.shared.backgroundPlay {
+                                AppLog.player.info("voices pause reason=background-play-off appState=\(AppActivity.logValue)")
+                                await engine.pause()
+                            }
                         }
                     }
                 }
@@ -151,6 +157,7 @@ final class PlayerModel: SystemPlaybackTarget {
         title = videoID
         self.videoID = videoID
         tapAt = .now
+        removeMusic = AppSettings.shared.removeMusic
         AppLog.player.info("voices tap video=\(videoID) at=\(seconds) removeMusic=\(removeMusic) audioOnly=\(audioOnly)")
         do {
             let media = try await VideoResolver.media(for: videoID, withVideo: !audioOnly, synthetic: syntheticWall)
@@ -271,6 +278,7 @@ final class PlayerModel: SystemPlaybackTarget {
 
     func setRemoveMusic(_ on: Bool) async {
         removeMusic = on
+        if AppSettings.shared.removeMusic != on { AppSettings.shared.removeMusic = on }
         await engine?.setRemoveMusic(on)
     }
 

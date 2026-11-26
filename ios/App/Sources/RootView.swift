@@ -27,6 +27,7 @@ struct RootView: View {
         case benchmark(autoStart: Bool?)
         /// US-012; `id` plays at once (from `--voices`).
         case voices(id: String?, at: Double)
+        case settings
     }
 
     var body: some View {
@@ -83,42 +84,11 @@ struct RootView: View {
         NavigationStack(path: $path) {
             List {
                 Section {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("NewTube Musicless")
-                            .font(.title2.bold())
-                        Text(BuildInfo.summary)
-                            .font(.callout.monospaced())
-                            .foregroundStyle(.secondary)
-                            .accessibilityLabel("Version \(BuildInfo.version), build \(BuildInfo.build), commit \(BuildInfo.commit)")
-                        Text([MusiclessCoreModule.name, YouTubeEngineModule.name, MediaPipelineModule.name]
-                            .joined(separator: " · "))
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    }
-                    .padding(.vertical, 4)
-                }
-                Section("Account") {
                     AccountRow(account: AccountModel.shared)
                 }
-                Section("Debug") {
-                    NavigationLink(value: Route.probe) {
-                        Label("Device probe", systemImage: "cpu")
-                    }
-                    NavigationLink(value: Route.benchmark(autoStart: nil)) {
-                        Label("Separation benchmark", systemImage: "speedometer")
-                    }
-                    NavigationLink(value: Route.voices(id: nil, at: 0)) {
-                        Label("Watch (debug)", systemImage: "play.rectangle")
-                    }
-                    ModelStatusRow()
-                }
-                // Until Settings (US-024) has its own screen.
-                Section("Playback") {
-                    Toggle(isOn: Binding(get: { AppSettings.shared.showUpNext }, set: { AppSettings.shared.showUpNext = $0 })) {
-                        Label("Show Up next", systemImage: "list.bullet.below.rectangle")
-                    }
-                    Toggle(isOn: Binding(get: { AppSettings.shared.showHome }, set: { AppSettings.shared.showHome = $0 })) {
-                        Label("Show Home", systemImage: "house")
+                Section {
+                    NavigationLink(value: Route.settings) {
+                        Label("Settings", systemImage: "gearshape")
                     }
                 }
             }
@@ -128,6 +98,8 @@ struct RootView: View {
                 case .probe: DeviceProbeView()
                 case .benchmark(let autoStart):
                     BenchmarkView(benchmark: SeparationBenchmark(models: models), autoStart: autoStart)
+                case .settings:
+                    SettingsView(player: watch)
                 case .voices(let id, let at):
                     if let watch {
                         let arguments = ProcessInfo.processInfo.arguments
@@ -191,8 +163,9 @@ struct RootView: View {
         }
         if arguments.contains("--record-media") { Task { await MediaRecorder.run() } }
         AppLog.musicless.info("Model status \(models.status.logValue)")
-        // `--download-models` starts the voice-model download at launch (no auto-start yet: D25).
-        if ProcessInfo.processInfo.arguments.contains("--download-models") { models.start() }
+        // The fork's first run: the voice models download at launch while Remove music is on
+        // (MobileMainApplication, MusiclessPrefs.isOn). `--download-models` forces it.
+        if AppSettings.shared.removeMusic || arguments.contains("--download-models") { models.start() }
         if path.isEmpty, let index = arguments.firstIndex(of: "--search") {
             // `--search [<query>]`: the Search tab, searching at once (screenshots, phone checks).
             tab = .search
@@ -221,6 +194,7 @@ struct RootView: View {
             tab = .search
             searchPath = [.watch(videoID: arguments[index + 1])]
         }
+        if path.isEmpty, arguments.contains("--settings") { path = [.settings] }
         if !path.isEmpty || arguments.contains("--sign-in") { tab = .you }
     }
 }

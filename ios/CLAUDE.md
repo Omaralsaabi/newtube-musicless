@@ -103,6 +103,7 @@ xcrun devicectl device process launch --device "$DEVICE_ID" --terminate-existing
   launch without saving the setting. The player is `Playback/PlayerModel.swift`, shared with the
   debug watch screen (its checks: `Debug/PlayerChecks.swift`). `--channel <id>` and `--playlist <id>`
   (US-021) open those pages.
+- `--settings` (US-024) opens Settings (the debug screens are in its Debug section now).
 - `--sign-in` (US-022) opens the sign-in sheet. The account lives in the Keychain only
   (`App/Sources/Account/`); its lines are `oauth …`, `account …`, `history-tracking …` and
   `history-ping …`, and none of them may ever print a token, code, client id or secret.

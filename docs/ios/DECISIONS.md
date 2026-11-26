@@ -178,7 +178,8 @@ phone. The Mac's only other simulator belongs to another project. Its id is loca
   the `com_apple_backup_excludeItem` attribute on the simulator).
 - `ModelStore` is a main-actor `@Observable` (`notDownloaded`, `downloading(percent)`, `ready`,
   `failed(message)`, `start`/`retry`, `awaitReady`).
-- **No download at launch yet.** Android starts it at launch when Remove music is on; here a debug
+- **No download at launch yet** (superseded by D55: it starts at launch while Remove music is on).
+  Android starts it at launch when Remove music is on; here a debug
   row (and `--download-models`) starts it until the Remove-music setting exists (US-014/US-024), so
   a debug build doesn't spend 36 MB of someone's data unasked.
 - Verified with the real release: both files gunzip to the pinned hashes (Mac test `liveRelease`,
@@ -1067,6 +1068,37 @@ Personal Team test (Q8, D15) moves with them: there is still no paid-only capabi
   `sectionListContinuation`, and refresh by pulling down. Each tab has its own navigation stack;
   the player stops when no stack shows a watch page.
 - **The user's to check:** the feed itself, once signed in.
+
+### D55. Settings — US-024
+
+- **Reached from You**, which now holds the account and Settings (FR-18; Downloads and Open a file
+  come with US-027/028). The debug screens moved into Settings' Debug section.
+- **Music removal:**
+  - Remove music is on by default (MusiclessPrefs). It's one setting: the player menu's switch
+    changes it too, as on Android.
+  - Voice models: the status, the size on disk (39.3 MB), and Download, Retry or Re-download (after
+    a confirmation). `ModelStore` gained `bytesOnDisk` and `redownload()`, which deletes the
+    published and partial files.
+  - **The download now starts at launch while Remove music is on**, as the fork's first run does.
+    This closes D25's "no auto-start yet".
+- **Playback:**
+  - Maximum quality: 1080p (the default and the H.264 ceiling) down to 240p, as the selector's
+    short-side cap.
+  - **Prefer 60 fps** (on): off, a ≤ 30 fps file of the same size wins, and 60 fps is chosen only
+    when it's the only one at that size. Tested in `FormatSelector`.
+  - **Background play** (on): off, leaving the app pauses unless Picture in Picture keeps it on
+    screen.
+  - Show Up next, Show Home.
+- **Language:** a row showing the current language that opens the app's page in iOS Settings (PRD).
+  The fork's first run sets Arabic; iOS leaves the choice to that page (US-025).
+- **About:** the version and the five licences from `assets/musicless/`.
+  - Musicless, Spleeter and ONNX Runtime are copied as `.txt`: XcodeGen didn't bundle the
+    extensionless files.
+  - Also the ONNX Runtime third-party notices (335 KB, shown in a text view) and NOTICE.
+- **Debug:** the probe, the benchmark, the debug watch screen, the synthetic wall, the commit, and
+  the log export (this launch's lines from `OSLogStore`, the app's subsystem, shared as a text
+  file).
+- New launch flag: `--settings`.
 
 ## Settled `[verify]` items
 

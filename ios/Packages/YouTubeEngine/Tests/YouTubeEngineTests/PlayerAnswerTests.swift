@@ -152,6 +152,19 @@ import Testing
         #expect(FormatSelector.select(answer, maxShortSide: 720).video?.itag == 2)
     }
 
+    @Test func withoutPrefer60fpsTheSteadierFileOfTheSameSizeWins() throws {
+        let formats = [
+            Self.format(298, #"video/mp4; codecs="avc1.4d4020""#, width: 1280, height: 720, fps: 60, bitrate: 3_000_000),
+            Self.format(136, #"video/mp4; codecs="avc1.4d401f""#, width: 1280, height: 720, fps: 30, bitrate: 1_500_000),
+            Self.format(135, #"video/mp4; codecs="avc1.4d401f""#, width: 854, height: 480, fps: 30, bitrate: 800_000),
+            Self.format(299, #"video/mp4; codecs="avc1.64002a""#, width: 1920, height: 1080, fps: 60, bitrate: 6_000_000),
+        ].joined(separator: ",")
+        let answer = try Self.answer(#"{"playabilityStatus":{"status":"OK"},"streamingData":{"adaptiveFormats":[\#(formats)]}}"#)
+        #expect(FormatSelector.select(answer, maxShortSide: 720).video?.itag == 298)
+        #expect(FormatSelector.select(answer, maxShortSide: 720, prefer60fps: false).video?.itag == 136)
+        #expect(FormatSelector.select(answer, prefer60fps: false).video?.itag == 299, "60 fps when it's the only file at that size")
+    }
+
     @Test func audioPrefersAACLCAt44100ThenAnyMP4A() throws {
         let both = [
             Self.format(10, #"audio/mp4; codecs="mp4a.40.2""#, bitrate: 130_000, rate: "44100"),
