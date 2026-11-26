@@ -1300,6 +1300,60 @@ work resumes: US-031 and US-032 open videos through its `musicless://` link.
 - **Not ported yet:** Android's Audio track sheet, for choosing a dub by hand. Every video plays
   its original.
 
+### D62. Watch history that YouTube records, the red bar, History, Watch later
+
+- **The bug: nothing reached YouTube's history.** The pings need tracking from an answer asked
+  with the account, and `historyTracking` asked Android's TV 7.x `/player` (LANES §3).
+  - Signed in, that client now answers UNPLAYABLE, "The page needs to be reloaded" (in the
+    account's language), with no `playbackTracking`. So `tracking=missing`, and no ping was ever
+    sent.
+  - `--history-probe <id>` (read only) compared the variants on the iPhone:
+    - TV 7.x: UNPLAYABLE, tracking missing;
+    - TV 7.x without the visitor: the same;
+    - TV_TIZEN, the account route: OK, tracking complete.
+  - **Now the account route goes first and TV 7.x is the fallback.** This deviates from Android,
+    whose TV 7.x request is likely refused the same way (not checked there).
+  - iPhone: `history-tracking client=TV_TIZEN status=OK tracking=complete`, then
+    `/api/stats/playback` and `/api/stats/watchtime` answered 204.
+- **The red bar** (Android: `percentWatched` on the card, VideoCardAdapter.bindProgress, filled
+  from VideoStateService where the card has none):
+  - `FeedItem.percentWatched` reads YouTube's value from a tile's or classic renderer's
+    `thumbnailOverlayResumePlaybackRenderer.percentDurationWatched` and a lockup's
+    `thumbnailOverlayProgressBarViewModel.startPercent` (CommonHelper.kt).
+  - Signed in on the iPhone (`--account-lists-check`, read only): History 13/13 cards with a
+    value, Watch later 9/15, Subscriptions 1/45.
+  - `WatchProgress` (Application Support, the latest 1,000 videos) is this app's own record,
+    signed in or out. It is written every 15 s of playing and on pause, end and stop, but not at
+    the start, which is always 0 because iOS doesn't resume yet.
+  - **Which value a card shows:** this app's record first, else YouTube's. Android prefers the
+    card's value unless it is missing or 100; here the local record is the newest thing done on
+    this phone.
+  - A video closed at once shows 1 %, and the last 5 % count as watched (100), as on Android.
+  - The bar is 3 pt along the thumbnail's bottom edge, filling from the leading side (it mirrors
+    in Arabic). VoiceOver reads "Watched N%".
+- **History tab** (Android's bottom nav has History): `/browse` `FEhistory` over the TV client
+  with the account (BrowseService2 `getHistory`), the Subscriptions screen with its own wording.
+  It reloads each time the tab comes back.
+  - Tabs: [Home], Subscriptions, History, Search, You.
+- **Watch later** (Android: You → Playlists, and "Add to Watch later" in the card menu, on by
+  default):
+  - **You → Watch later** (signed in) opens the playlist page for `VLWL`. The You stack now
+    carries list routes (`Route.browse`), so its videos open on the watch page there.
+  - **Saving:** `browse/edit_playlist` on `WL` with `ACTION_ADD_VIDEO` or
+    `ACTION_REMOVE_VIDEO_BY_VIDEO_ID` over the TV client (PlaylistApiHelper), success when
+    `status` is `STATUS_SUCCEEDED`.
+  - Saving appears in two places: the watch page's "Watch later" button (shows "Saved", and a
+    tap removes it) and a long-press menu on every video card.
+  - `WatchLater` remembers what was saved, or seen in the list, during the session, so both
+    places agree. A video removed from the Watch later list leaves it at once.
+  - The PRD lists playlist editing as a non-goal. Saving to and removing from Watch later is the
+    developer's request; other playlists stay out of scope.
+- **Checked on the iPhone by the developer, signed in:** watched videos appear in YouTube's
+  history in the browser, the red bars show, the History tab lists the history, and saving to
+  and removing from Watch later work (the button, the card menu and You → Watch later).
+- **Not done:** resuming playback where the bar says (Android does); a History entry's own menu
+  (remove from history).
+
 ## Settled `[verify]` items
 
 | PRD item | Result | Evidence |

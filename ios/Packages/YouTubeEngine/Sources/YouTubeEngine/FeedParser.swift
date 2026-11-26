@@ -22,6 +22,8 @@ public struct FeedItem: Sendable, Hashable, Identifiable {
     public var details: [String]
     /// Quality and status badges ("4K", "CC", "New").
     public var badges: [String]
+    /// How much of it the account has watched, 1–100, from YouTube's red bar; nil when none.
+    public var percentWatched: Int?
 
     public init(kind: Kind, id: String, title: String, channel: String? = nil, channelID: String? = nil, thumbnail: URL? = nil,
                 duration: String? = nil, details: [String] = [], badges: [String] = []) {
@@ -77,6 +79,31 @@ public enum FeedParser {
 
     /// One item wrapper; nil for what isn't a card (a continuation item, an unknown renderer).
     public static func item(_ wrapper: JSONNode) -> FeedItem? {
+        guard var item = shape(wrapper) else { return nil }
+        if item.isPlayable { item.percentWatched = percentWatched(wrapper) }
+        return item
+    }
+
+    /// The account's watched share of a card, as Android reads it (CommonHelper.kt
+    /// `getPercentWatched`): a lockup's progress bar, a tile's or a classic renderer's resume
+    /// overlay. Signed out, YouTube sends none.
+    static func percentWatched(_ wrapper: JSONNode) -> Int? {
+        var values: [Int?] = []
+        for overlay in wrapper["lockupViewModel"]["contentImage"]["thumbnailViewModel"]["overlays"].array ?? [] {
+            values.append(overlay["thumbnailBottomOverlayViewModel"]["progressBar"]["thumbnailOverlayProgressBarViewModel"]["startPercent"].int)
+        }
+        var overlays = wrapper["tileRenderer"]["header"]["tileHeaderRenderer"]["thumbnailOverlays"].array ?? []
+        for key in ["videoRenderer", "gridVideoRenderer", "compactVideoRenderer"] {
+            overlays += wrapper[key]["thumbnailOverlays"].array ?? []
+        }
+        for overlay in overlays {
+            values.append(overlay["thumbnailOverlayResumePlaybackRenderer"]["percentDurationWatched"].int)
+        }
+        guard let percent = values.compactMap({ $0 }).first, percent > 0 else { return nil }
+        return min(percent, 100)
+    }
+
+    static func shape(_ wrapper: JSONNode) -> FeedItem? {
         if wrapper["lockupViewModel"].exists { return lockup(wrapper["lockupViewModel"]) }
         if wrapper["shortsLockupViewModel"].exists { return shortsLockup(wrapper["shortsLockupViewModel"]) }
         if wrapper["tileRenderer"].exists { return tile(wrapper["tileRenderer"]) }

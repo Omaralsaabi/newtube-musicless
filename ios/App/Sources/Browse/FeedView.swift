@@ -59,7 +59,7 @@ final class FeedModel {
     }
 }
 
-/// Subscriptions (the first tab) or Home (off by default). Signed out, a sign-in prompt.
+/// Subscriptions (the first tab), History, or Home (off by default). Signed out, a sign-in prompt.
 struct FeedView: View {
     let title: LocalizedStringKey
     let systemImage: String
@@ -79,6 +79,10 @@ struct FeedView: View {
         .task(id: account.isSignedIn) {
             if account.isSignedIn { await model.load() } else { model.reset() }
         }
+        // History changes with every video watched: fresh each time its tab comes back.
+        .onAppear {
+            if model.feed == .history, account.isSignedIn, model.phase == .loaded { Task { await model.load(force: true) } }
+        }
         .sheet(isPresented: $signingIn) { SignInView(account: account) }
     }
 
@@ -87,7 +91,7 @@ struct FeedView: View {
             ContentUnavailableView {
                 Label(title, systemImage: systemImage)
             } description: {
-                Text("Sign in to see videos from the channels you follow.")
+                Text(model.feed == .history ? "Sign in to see the videos you've watched." : "Sign in to see videos from the channels you follow.")
             } actions: {
                 Button("Sign in") { signingIn = true }.buttonStyle(.borderedProminent)
             }
@@ -103,7 +107,8 @@ struct FeedView: View {
                 }
             case .loaded:
                 if model.list.items.isEmpty {
-                    ContentUnavailableView(title, systemImage: systemImage, description: Text("Nothing here yet."))
+                    ContentUnavailableView(title, systemImage: systemImage,
+                                           description: Text(model.feed == .history ? "Videos you watch appear here." : "Nothing here yet."))
                 } else {
                     List {
                         FeedRowsSection(items: model.list.items, loadingMore: model.loadingMore, path: $path) {

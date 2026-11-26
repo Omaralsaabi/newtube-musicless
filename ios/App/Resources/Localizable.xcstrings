@@ -627,6 +627,17 @@
         }
       }
     },
+    "History": {
+      "comment": "Android: header_history",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "السجلّ"
+          }
+        }
+      }
+    },
     "Home": {
       "comment": "Android: header_home",
       "localizations": {
@@ -968,6 +979,17 @@
         }
       }
     },
+    "Remove from Watch later": {
+      "comment": "iOS only",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "إزالة من \"مشاهدة لاحقًا\""
+          }
+        }
+      }
+    },
     "Remove music": {
       "comment": "Android: mobile_settings_remove_music",
       "localizations": {
@@ -975,6 +997,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "إزالة الموسيقى"
+          }
+        }
+      }
+    },
+    "Removes it from Watch later": {
+      "comment": "iOS only",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يزيله من \"مشاهدة لاحقًا\""
           }
         }
       }
@@ -1067,6 +1100,28 @@
         }
       }
     },
+    "Save to Watch later": {
+      "comment": "Android: add_video_to_watch_later",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "حفظ في \"مشاهدة لاحقًا\""
+          }
+        }
+      }
+    },
+    "Saved": {
+      "comment": "Android: mobile_watch_saved",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تم الحفظ"
+          }
+        }
+      }
+    },
     "Saved without music": {
       "comment": "iOS only",
       "localizations": {
@@ -1074,6 +1129,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "محفوظ بدون موسيقى"
+          }
+        }
+      }
+    },
+    "Saves it to Watch later": {
+      "comment": "iOS only",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يحفظه في \"مشاهدة لاحقًا\""
           }
         }
       }
@@ -1206,6 +1272,17 @@
           "stringUnit": {
             "state": "translated",
             "value": "تسجيل الدخول"
+          }
+        }
+      }
+    },
+    "Sign in to see the videos you've watched.": {
+      "comment": "iOS only",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "سجّل الدخول لترى الفيديوهات التي شاهدتها."
           }
         }
       }
@@ -1441,6 +1518,17 @@
         }
       }
     },
+    "Videos you watch appear here.": {
+      "comment": "iOS only",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تظهر هنا الفيديوهات التي تشاهدها."
+          }
+        }
+      }
+    },
     "Voice models": {
       "comment": "iOS only",
       "localizations": {
@@ -1492,6 +1580,39 @@
           "stringUnit": {
             "state": "translated",
             "value": "المشاهدة (تصحيح)"
+          }
+        }
+      }
+    },
+    "Watch later": {
+      "comment": "iOS only",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "مشاهدة لاحقًا"
+          }
+        }
+      }
+    },
+    "Watched": {
+      "comment": "iOS only",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تمت المشاهدة"
+          }
+        }
+      }
+    },
+    "Watched %lld%%": {
+      "comment": "iOS only",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تمت مشاهدة %lld%%"
           }
         }
       }

@@ -70,6 +70,8 @@ final class PlayerModel: SystemPlaybackTarget {
     @ObservationIgnored private var observers: [any NSObjectProtocol] = []
     /// The start ping went for this video.
     @ObservationIgnored private var historyStarted = false
+    /// Where the red bar's record was last written (WatchProgress), in seconds.
+    @ObservationIgnored private var progressRecordedAt: Double = 0
 
     init(models: ModelStore) {
         self.models = models
@@ -303,9 +305,11 @@ final class PlayerModel: SystemPlaybackTarget {
         poll = nil
         if let videoID, let snapshot, let length = snapshot.duration, snapshot.status != .ended, historyStarted {
             let history = PlaybackServices.shared.history, position = snapshot.position
+            WatchProgress.shared.record(videoID: videoID, position: position, length: length)
             Task { await history.report(videoID: videoID, position: position, length: length, event: "stop") }
         }
         historyStarted = false
+        progressRecordedAt = 0
         if let engine {
             AppLog.player.info("voices stop reason=\(reason) appState=\(AppActivity.logValue)")
             self.engine = nil
@@ -394,11 +398,23 @@ final class PlayerModel: SystemPlaybackTarget {
         }
         guard let event else { return }
         let position = event == "end" ? length : snapshot.position
+        // Not at the start: the player begins at 0 and would wipe an earlier record.
+        if event != "start" { WatchProgress.shared.record(videoID: videoID, position: position, length: length) }
         let history = PlaybackServices.shared.history
         Task { await history.report(videoID: videoID, position: position, length: length, event: event) }
     }
 
+    /// The red bar's own record (WatchProgress) every 15 s of playing, so a killed app keeps most
+    /// of it. From the engine's changes and the 250 ms poll (steady playback only polls).
+    private func checkpointProgress(_ snapshot: PlayerEngine.Snapshot) {
+        guard snapshot.status == .playing, let videoID, let length = snapshot.duration,
+              abs(snapshot.position - progressRecordedAt) >= 15 else { return }
+        progressRecordedAt = snapshot.position
+        WatchProgress.shared.record(videoID: videoID, position: snapshot.position, length: length)
+    }
+
     private func changed(_ snapshot: PlayerEngine.Snapshot) {
+        checkpointProgress(snapshot)
         reportHistory(self.snapshot, snapshot)
         self.snapshot = snapshot
         NowPlaying.shared.update(snapshot)
@@ -417,6 +433,7 @@ final class PlayerModel: SystemPlaybackTarget {
                 guard let engine = self?.engine else { return }
                 let snapshot = await engine.snapshot()
                 self?.snapshot = snapshot
+                self?.checkpointProgress(snapshot)
                 try? await Task.sleep(for: .milliseconds(250))
             }
         }

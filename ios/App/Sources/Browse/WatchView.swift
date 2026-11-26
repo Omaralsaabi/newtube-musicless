@@ -124,7 +124,10 @@ struct WatchView: View {
                 let line = [next.shortViews ?? next.views, next.age ?? next.published].compactMap { $0 }.joined(separator: " · ")
                 if !line.isEmpty { Text(line).font(.footnote).foregroundStyle(.secondary) }
                 channelRow(next)
-                downloadButton(next)
+                HStack(spacing: 10) {
+                    downloadButton(next)
+                    watchLaterButton
+                }
                 description(next)
                 commentsRow(next)
             } else if model.failed {
@@ -204,6 +207,24 @@ struct WatchView: View {
             if player.videoID != model.videoID || player.qualities.isEmpty {
                 Button("Best") { startDownload(next, option: nil) }
             }
+        }
+    }
+
+    /// Watch later (signed in): saves the video, or removes it when it's saved.
+    @ViewBuilder private var watchLaterButton: some View {
+        if AccountModel.shared.isSignedIn {
+            let watchLater = WatchLater.shared
+            let saved = watchLater.isSaved(model.videoID)
+            Button { Task { await watchLater.toggle(model.videoID) } } label: {
+                Label(saved ? String(localized: "Saved") : String(localized: "Watch later"),
+                      systemImage: saved ? "checkmark.circle.fill" : "clock.badge.plus")
+                    .font(.subheadline.weight(.semibold))
+            }
+            .buttonStyle(.bordered)
+            .disabled(watchLater.pending.contains(model.videoID))
+            .accessibilityHint(saved ? Text("Removes it from Watch later") : Text("Saves it to Watch later"))
+            .sensoryFeedback(.success, trigger: watchLater.changes)
+            .sensoryFeedback(.error, trigger: watchLater.failures)
         }
     }
 

@@ -14,14 +14,16 @@ struct RootView: View {
     @State private var searchPath: [BrowseRoute] = []
     @State private var subscriptionsPath: [BrowseRoute] = []
     @State private var homePath: [BrowseRoute] = []
+    @State private var historyPath: [BrowseRoute] = []
     @State private var subscriptions = FeedModel(feed: .subscriptions)
     @State private var home = FeedModel(feed: .home)
+    @State private var history = FeedModel(feed: .history)
     private let settings = AppSettings.shared
     @State private var search = SearchModel(browse: PlaybackServices.shared.browse)
     /// The watch screen's player; it outlives the view and stops when its route is popped.
     @State private var watch: PlayerModel?
 
-    enum Tab: Hashable { case home, subscriptions, search, you }
+    enum Tab: Hashable { case home, subscriptions, history, search, you }
 
     enum Route: Hashable {
         case probe
@@ -33,6 +35,8 @@ struct RootView: View {
         /// A local file (US-027); `voicesOnly`: a download saved without music.
         case file(URL, voicesOnly: Bool = false)
         case downloads
+        /// A list page or video opened from You (Watch later), in the You tab's own stack.
+        case browse(BrowseRoute)
     }
 
     var body: some View {
@@ -48,6 +52,11 @@ struct RootView: View {
                      path: $subscriptionsPath) { AnyView(destination($0, path: $subscriptionsPath)) }
                 .tabItem { Label("Subscriptions", systemImage: "play.square.stack") }
                 .tag(Tab.subscriptions)
+            // History (signed in), a tab as on Android (MobileBrowseActivity's bottom nav).
+            FeedView(title: "History", systemImage: "clock.arrow.circlepath", model: history, account: AccountModel.shared,
+                     path: $historyPath) { AnyView(destination($0, path: $historyPath)) }
+                .tabItem { Label("History", systemImage: "clock.arrow.circlepath") }
+                .tag(Tab.history)
             SearchView(model: search, path: $searchPath) { AnyView(destination($0, path: $searchPath)) }
                 .tabItem { Label("Search", systemImage: "magnifyingglass") }
                 .tag(Tab.search)
@@ -73,6 +82,7 @@ struct RootView: View {
         .onChange(of: searchPath) { _, _ in stopPlayerIfHidden() }
         .onChange(of: subscriptionsPath) { _, _ in stopPlayerIfHidden() }
         .onChange(of: homePath) { _, _ in stopPlayerIfHidden() }
+        .onChange(of: historyPath) { _, _ in stopPlayerIfHidden() }
         .onChange(of: models.status) { _, status in
             AppLog.musicless.info("Model status \(status.logValue)")
         }
@@ -97,10 +107,18 @@ struct RootView: View {
             default: false
             }
         }
-        let showsWatch = [searchPath, subscriptionsPath, homePath].contains { stack in
+        let showsWatch = [searchPath, subscriptionsPath, homePath, historyPath, youBrowsePath.wrappedValue].contains { stack in
             stack.contains { if case .watch = $0 { true } else { false } }
         }
         if !showsVoices, !showsWatch, let watch, watch.isActive { Task { await watch.stop(reason: "left the screen") } }
+    }
+
+    /// The You tab's list pages, seen as browse routes (they follow its own screens in the stack).
+    private var youBrowsePath: Binding<[BrowseRoute]> {
+        Binding(get: { path.compactMap { if case .browse(let route) = $0 { route } else { nil } } },
+                set: { routes in
+                    path = path.filter { if case .browse = $0 { false } else { true } } + routes.map(Route.browse)
+                })
     }
 
     private var you: some View {
@@ -108,6 +126,13 @@ struct RootView: View {
             List {
                 Section {
                     AccountRow(account: AccountModel.shared)
+                }
+                if AccountModel.shared.isSignedIn {
+                    Section {
+                        NavigationLink(value: Route.browse(.playlist(id: BrowseClient.watchLater, title: String(localized: "Watch later")))) {
+                            Label("Watch later", systemImage: "clock")
+                        }
+                    }
                 }
                 Section {
                     NavigationLink(value: Route.downloads) {
@@ -135,6 +160,8 @@ struct RootView: View {
                     if let watch { LocalFileView(url: url, voicesOnly: voicesOnly, player: watch) }
                 case .downloads:
                     DownloadsView(path: $path)
+                case .browse(let route):
+                    destination(route, path: youBrowsePath)
                 case .voices(let id, let at):
                     if let watch {
                         let arguments = ProcessInfo.processInfo.arguments
@@ -171,6 +198,35 @@ struct RootView: View {
         if arguments.contains("--resolve-check") { Task { await PlayerCheckRunner.runUS009(record: false) } }
         if arguments.contains("--record-answers") { Task { await PlayerCheckRunner.runUS009(record: true) } }
         if arguments.contains("--fetch-check") { Task { await FetchCheckRunner.run() } }
+        // `--account-lists-check`: History, Watch later and Subscriptions, read only: counts and red bars.
+        if arguments.contains("--account-lists-check") {
+            Task {
+                let browse = PlaybackServices.shared.browse
+                func line(_ name: String, _ items: [FeedItem], more: Bool) {
+                    let watched = items.compactMap(\.percentWatched)
+                    AppLog.netPath.info("account-lists \(name) items=\(items.count) watched=\(watched.count) "
+                                        + "percents=\(watched.prefix(8)) continuation=\(more ? "y" : "n")")
+                }
+                do { let page = try await browse.feed(.history); line("history", page.items, more: page.continuation != nil) }
+                catch { AppLog.netPath.info("account-lists history failed error=\(error)") }
+                do { let page = try await browse.playlist(id: BrowseClient.watchLater); line("watch-later", page.page.items, more: page.page.continuation != nil) }
+                catch { AppLog.netPath.info("account-lists watch-later failed error=\(error)") }
+                do { let page = try await browse.feed(.subscriptions); line("subscriptions", page.items, more: page.continuation != nil) }
+                catch { AppLog.netPath.info("account-lists subscriptions failed error=\(error)") }
+            }
+        }
+        // `--history-probe <id>`: the account-bound /player variants for watch history, read only.
+        if let index = arguments.firstIndex(of: "--history-probe"), arguments.indices.contains(index + 1) {
+            let videoID = arguments[index + 1]
+            Task {
+                let services = PlaybackServices.shared
+                guard let authorization = await services.tokens.authorization() else {
+                    AppLog.netPath.info("history-probe signed-out")
+                    return
+                }
+                await services.sources.historyProbe(videoID: videoID, authorization: authorization)
+            }
+        }
         // `--sync-check [<id>] [--sync-seconds <s>]`: beep and flash timing of a sync test video (US-013).
         if let index = arguments.firstIndex(of: "--sync-check") {
             let next = arguments.indices.contains(index + 1) ? arguments[index + 1] : ""

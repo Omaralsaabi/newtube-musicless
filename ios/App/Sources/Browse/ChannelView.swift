@@ -160,6 +160,7 @@ final class PlaylistModel {
             list = FeedList()
             list.userAskedForMore()
             list.append(page.page)
+            noteWatchLater(page.page.items)
         } catch {
             AppLog.netPath.info("browse playlist failed error=\(error)")
             failed = true
@@ -172,6 +173,14 @@ final class PlaylistModel {
         defer { loadingMore = false }
         guard let page = try? await browse.continueBrowse(token) else { return }
         list.append(page)
+        noteWatchLater(page.items)
+    }
+
+    var isWatchLater: Bool { id == BrowseClient.watchLater }
+
+    /// The Watch later list's videos are saved (their card menus offer to remove them).
+    private func noteWatchLater(_ items: [FeedItem]) {
+        if isWatchLater { WatchLater.shared.noteListed(items.map(\.id)) }
     }
 }
 
@@ -197,7 +206,9 @@ struct PlaylistView: View {
                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                 .accessibilityElement(children: .combine)
             }
-            FeedRowsSection(items: model.list.items, loadingMore: model.loadingMore, path: $path) { Task { await model.loadMore() } }
+            // Watch later drops a video as soon as its menu removes it.
+            let items = model.isWatchLater ? model.list.items.filter { WatchLater.shared.isSaved($0.id) } : model.list.items
+            FeedRowsSection(items: items, loadingMore: model.loadingMore, path: $path) { Task { await model.loadMore() } }
         }
         .listStyle(.plain)
         .navigationTitle(model.page?.title ?? title)

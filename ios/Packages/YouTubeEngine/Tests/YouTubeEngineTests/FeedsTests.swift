@@ -41,4 +41,48 @@ import Testing
         let signedOut = try FeedParser.feed(try BrowseParserTests.fixture("home_signed_out"))
         #expect(signedOut.items.isEmpty && signedOut.continuation == nil)
     }
+
+    // MARK: The red bar (percentWatched), signed in
+
+    /// A recorded tile with a resume overlay added, as signed-in answers carry it.
+    static func tile(percent: Int?) throws -> [String: Any] {
+        var wrapper = try #require(try Self.tiles(1).first as? [String: Any])
+        var tile = try #require(wrapper["tileRenderer"] as? [String: Any])
+        var header = try #require(tile["header"] as? [String: Any])
+        var renderer = try #require(header["tileHeaderRenderer"] as? [String: Any])
+        var overlays = renderer["thumbnailOverlays"] as? [Any] ?? []
+        if let percent { overlays.append(["thumbnailOverlayResumePlaybackRenderer": ["percentDurationWatched": percent]]) }
+        renderer["thumbnailOverlays"] = overlays
+        header["tileHeaderRenderer"] = renderer
+        tile["header"] = header
+        wrapper["tileRenderer"] = tile
+        return wrapper
+    }
+
+    @Test func tilesCarryTheWatchedShare() throws {
+        #expect(FeedParser.item(JSONNode(try Self.tile(percent: 42)))?.percentWatched == 42)
+        #expect(FeedParser.item(JSONNode(try Self.tile(percent: nil)))?.percentWatched == nil, "signed out: no bar")
+        #expect(FeedParser.item(JSONNode(try Self.tile(percent: 0)))?.percentWatched == nil, "0 % draws nothing")
+        #expect(FeedParser.item(JSONNode(try Self.tile(percent: 130)))?.percentWatched == 100)
+    }
+
+    @Test func lockupsAndClassicRenderersCarryItToo() throws {
+        let lockup: [String: Any] = ["lockupViewModel": [
+            "contentId": "abc", "contentType": "LOCKUP_CONTENT_TYPE_VIDEO",
+            "contentImage": ["thumbnailViewModel": ["overlays": [
+                ["thumbnailBottomOverlayViewModel": ["progressBar": ["thumbnailOverlayProgressBarViewModel": ["startPercent": 64]]]],
+            ]]],
+            "metadata": ["lockupMetadataViewModel": ["title": ["content": "A video"]]],
+        ]]
+        #expect(FeedParser.item(JSONNode(lockup))?.percentWatched == 64)
+        let classic: [String: Any] = ["videoRenderer": [
+            "videoId": "def", "title": ["simpleText": "A video"],
+            "thumbnailOverlays": [["thumbnailOverlayResumePlaybackRenderer": ["percentDurationWatched": 7]]],
+        ]]
+        #expect(FeedParser.item(JSONNode(classic))?.percentWatched == 7)
+    }
+
+    @Test func historyIsATVFeed() {
+        #expect(Feed.history.rawValue == "FEhistory")
+    }
 }

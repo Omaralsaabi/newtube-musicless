@@ -94,19 +94,28 @@ public struct PlayerSources: Sendable {
 
     public static let reelURL = URL(string: "https://youtubei.googleapis.com/youtubei/v1/reel/reel_item_watch")!
 
-    /// One attempt, bounded by `budget` end to end (a source that hangs is a no-response).
-    /// History (LANES §3, `getAuthVideoInfo`): one TV 7.x /player with the account, for the pings'
+    /// History (LANES §3, `getAuthVideoInfo`): one /player with the account, for the pings'
     /// account-bound tracking, when the winner was anonymous. Its formats are not used.
+    ///
+    /// The account route (TV_TIZEN) first, then Android's TV 7.x: signed in, TV 7.x now answers
+    /// UNPLAYABLE "The page needs to be reloaded" without `playbackTracking` (with or without the
+    /// visitor), while TV_TIZEN answers OK with it (DECISIONS D62, `--history-probe`).
     public func historyTracking(videoID: String, authorization: String) async -> WatchHistory.Tracking? {
-        guard case .answer(let answer) = await request(.tv, videoID: videoID, authorization: authorization) else {
-            log("history-tracking video=\(videoID) result=no-answer")
-            return nil
+        for client in [SourcePlanner.accountRoute, ClientProfile.tv] {
+            guard case .answer(let answer) = await request(client, videoID: videoID, authorization: authorization) else {
+                log("history-tracking video=\(videoID) client=\(client.id) result=no-answer")
+                continue
+            }
+            let tracking = WatchHistory.Tracking(videostatsURL: answer.videostatsPlaybackURL, cpn: answer.requestCPN ?? "")
+            log("history-tracking video=\(videoID) client=\(client.id) status=\(answer.playability.status) "
+                + "tracking=\(tracking == nil ? "missing" : "complete")"
+                + (answer.playability.status == "OK" ? "" : " reason=\"\(answer.playability.text ?? "")\""))
+            if let tracking { return tracking }
         }
-        let tracking = WatchHistory.Tracking(videostatsURL: answer.videostatsPlaybackURL, cpn: answer.requestCPN ?? "")
-        log("history-tracking video=\(videoID) status=\(answer.playability.status) tracking=\(tracking == nil ? "missing" : "complete")")
-        return tracking
+        return nil
     }
 
+    /// One attempt, bounded by `budget` end to end (a source that hangs is a no-response).
     /// - authorization: the account (`Bearer …`), for the account route signed in only (FR-17).
     public func attempt(_ client: ClientProfile, videoID: String, budget: Duration, authorization: String? = nil) async -> WalkAttempt {
         await withTaskGroup(of: WalkAttempt?.self) { group in
@@ -125,7 +134,23 @@ public struct PlayerSources: Sendable {
         }
     }
 
-    private func request(_ client: ClientProfile, videoID: String, authorization: String?) async -> WalkAttempt {
+    /// Debug (`--history-probe`): the account-bound /player variants, read only (no ping is sent).
+    public func historyProbe(videoID: String, authorization: String) async {
+        let variants: [(String, ClientProfile, Bool)] = [("tv", .tv, true), ("tv-no-visitor", .tv, false),
+                                                         ("account-route", SourcePlanner.accountRoute, true)]
+        for (name, client, withVisitor) in variants {
+            guard case .answer(let answer) = await request(client, videoID: videoID, authorization: authorization,
+                                                           withVisitor: withVisitor) else {
+                log("history-probe video=\(videoID) variant=\(name) result=no-answer")
+                continue
+            }
+            let tracking = WatchHistory.Tracking(videostatsURL: answer.videostatsPlaybackURL, cpn: answer.requestCPN ?? "")
+            log("history-probe video=\(videoID) variant=\(name) client=\(client.id) status=\(answer.playability.status) "
+                + "tracking=\(tracking == nil ? "missing" : "complete") reason=\"\(answer.playability.text ?? "")\"")
+        }
+    }
+
+    private func request(_ client: ClientProfile, videoID: String, authorization: String?, withVisitor: Bool = true) async -> WalkAttempt {
         var visitorData: String?
         var flags: String?
         if client.isEmbedded {
@@ -134,7 +159,7 @@ public struct PlayerSources: Sendable {
             flags = identity.encryptedHostFlags
         } else {
             guard let state = try? await visitor.current() else { return .noResponse }
-            visitorData = state.visitorData
+            visitorData = withVisitor ? state.visitorData : nil
         }
         let body = PlayerRequestBody(client: client, videoID: videoID, cpn: PlayerRequestBody.makeCPN(),
                                      visitorData: visitorData, signatureTimestamp: await visitor.signatureTimestamp(),

@@ -104,6 +104,10 @@ xcrun devicectl device process launch --device "$DEVICE_ID" --terminate-existing
   debug watch screen (its checks: `Debug/PlayerChecks.swift`). `--channel <id>` and `--playlist <id>`
   (US-021) open those pages.
 - `--settings` (US-024) opens Settings (the debug screens are in its Debug section now).
+- Signed in (D62): `--history-probe <id>` compares the account-bound `/player` variants for watch history
+  (read only); `--account-lists-check` loads History, Watch later and Subscriptions and logs their counts and
+  red-bar values (read only). History lines: `history-tracking client=…`, `history-ping …`; Watch later:
+  `watch-later video=… saved=y|n status=…`.
 - `--watch <id> --download` (US-028) downloads that video at "Best" (with Remove music on, the
   music is removed); `--downloads` opens You → Downloads. Lines: `download …`, `download
   background-task …` (iOS 26 runs it as a `BGContinuedProcessingTask`; the simulator refuses it),

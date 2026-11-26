@@ -31,7 +31,10 @@ struct FeedCard: View {
             Color.clear
                 .aspectRatio(16 / 9, contentMode: .fit)
                 .overlay { Thumbnail(url: item.thumbnail) }
-                .overlay(alignment: .bottomTrailing) { badge.padding(8) }
+                .overlay(alignment: .bottomTrailing) { badge.padding(.horizontal, 8).padding(.bottom, watched == nil ? 8 : 11) }
+                .overlay(alignment: .bottom) {
+                    if let watched { WatchedBar(percent: watched) }
+                }
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.title)
                     .font(.subheadline.weight(.semibold))
@@ -47,9 +50,16 @@ struct FeedCard: View {
             .padding(.horizontal, 4)
         }
         .contentShape(Rectangle())
+        .contextMenu { if item.isPlayable, item.kind != .short { WatchLaterMenuItem(videoID: item.id) } }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
         .accessibilityAddTraits(.isButton)
+    }
+
+    /// The red bar: this app's record of the video, else YouTube's (signed in).
+    private var watched: Int? {
+        guard item.isPlayable else { return nil }
+        return WatchProgress.shared.barPercent(videoID: item.id, youtube: item.percentWatched)
     }
 
     private var subtitle: String {
@@ -82,7 +92,46 @@ struct FeedCard: View {
         case .playlist: parts.append(String(localized: "Playlist"))
         default: if let duration = item.duration { parts.append(duration) }
         }
+        if let watched { parts.append(watched >= 100 ? String(localized: "Watched") : String(localized: "Watched \(watched)%")) }
         return parts.joined(separator: ", ")
+    }
+}
+
+/// How much of a video was watched: YouTube's red bar along the thumbnail's bottom edge, from the
+/// leading side (it mirrors in Arabic, as Android's ProgressBar does).
+struct WatchedBar: View {
+    let percent: Int
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                Rectangle().fill(Color.white.opacity(0.35))
+                Rectangle().fill(Color.red).frame(width: geometry.size.width * CGFloat(min(max(percent, 0), 100)) / 100)
+            }
+        }
+        .frame(height: 3)
+        .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: 12, bottomTrailingRadius: 12, style: .continuous))
+        .accessibilityHidden(true)
+    }
+}
+
+/// "Save to Watch later" / "Remove from Watch later", signed in only.
+struct WatchLaterMenuItem: View {
+    let videoID: String
+    private let watchLater = WatchLater.shared
+
+    var body: some View {
+        if AccountModel.shared.isSignedIn {
+            if watchLater.isSaved(videoID) {
+                Button { Task { await watchLater.set(videoID, saved: false) } } label: {
+                    Label("Remove from Watch later", systemImage: "clock.badge.xmark")
+                }
+            } else {
+                Button { Task { await watchLater.set(videoID, saved: true) } } label: {
+                    Label("Save to Watch later", systemImage: "clock.badge.plus")
+                }
+            }
+        }
     }
 }
 
