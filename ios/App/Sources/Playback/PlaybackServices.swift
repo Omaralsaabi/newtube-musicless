@@ -142,6 +142,8 @@ struct ResolvedMedia: Sendable {
     var vp9: MediaFile?
     /// Seconds the AAC runs late without declaring it (`YouTubeAudio.delay`), for the engine.
     var audioDelay: Double
+    /// The largest thumbnail, for Now Playing.
+    var thumbnail: URL?
     /// The source that served it (the walk's winner), and the visitor its request carried (nil for
     /// WEB_EMBED's embed identity), which the wall rule blames.
     var client: String
@@ -284,6 +286,7 @@ enum VideoResolver {
                              audio: audio, audioMime: audioFormat.mimeType, video: video, videoLabel: label,
                              videoOptions: options, opus: opus, vp9: vp9,
                              audioDelay: YouTubeAudio.delay(codecs: audioFormat.codecs, sampleRate: audioFormat.audioSampleRate),
+                             thumbnail: answer.details?.thumbnails.max { ($0.width ?? 0) < ($1.width ?? 0) }.flatMap { URL(string: $0.url) },
                              client: walk.client?.id ?? "?",
                              visitor: walk.client?.isEmbedded == true ? nil : visitor,
                              audioItag: audioFormat.itag, videoItag: withVideo ? selection.video?.itag : nil,

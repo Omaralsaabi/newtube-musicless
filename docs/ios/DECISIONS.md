@@ -798,6 +798,60 @@ Personal Team test (Q8, D15) moves with them: there is still no paid-only capabi
     repointed the same files (re-roll budget spent, VISIONOS answering fresh links last).
   - The replacement path is covered by a package test.
 
+### D49. The system player: Now Playing, PiP, full screen, speed — US-018
+
+- **Now Playing** (`NowPlaying`):
+  - Shows the title, channel, artwork (the largest thumbnail, fetched once), duration, elapsed time
+    and rate, with media type video.
+  - The system extrapolates the position from elapsed and rate. So these are published only when the
+    rate or duration changes (play, pause, a hold, a speed change) or the position jumps more than
+    0.5 s from the extrapolation (a seek). Over the check's first 40 s, with four speed changes, that
+    was 9 publishes, and the extrapolated position was 0.09 s from the engine's.
+  - **Remote commands:** play, pause, toggle, skip ±10 s and scrubbing. They call the same paths as
+    the screen's buttons.
+  - **The artwork handler must be nonisolated.** MediaPlayer calls it on its own queue. A closure
+    written inside a `@MainActor` class is main-actor isolated, and Swift 6's runtime check traps
+    (a SIGTRAP on the simulator the first time artwork was published).
+- **Picture in Picture** (`PictureInPicture`): `AVPictureInPictureController` on the engine's display
+  layer (`ContentSource(sampleBufferDisplayLayer:playbackDelegate:)`), with
+  `canStartPictureInPictureAutomaticallyFromInline`.
+  - The background rule (D44) waits 600 ms after the app leaves for PiP's will-start. While PiP runs,
+    the picture keeps decoding; if PiP closes while the app is away, the picture stops as before.
+  - The delegate's play, pause, skip and time range go to the same handlers as the remote commands.
+  - The simulator doesn't support PiP (`isPictureInPictureSupported` is false there), so it's checked
+    on the phone only (`--system-check`).
+- **Interruptions and headphones:** these come from US-012's `PlaybackAudioSession`:
+  - an interruption that begins pauses playback;
+  - an interruption that ends with `shouldResume` plays again;
+  - `oldDeviceUnavailable` (headphones unplugged) pauses.
+
+  A check can't make a phone call or unplug headphones, so this is the user's to try.
+- **Full screen:** the same display layer moves into a full-screen cover, so nothing reopens.
+  - The orientation is locked by an app delegate: portrait everywhere (US-020: portrait, plus
+    landscape full screen), landscape in full screen.
+  - Changing the lock and calling `setNeedsUpdateOfSupportedInterfaceOrientations` rotates the scene.
+    An explicit `requestGeometryUpdate` on top of it was refused every time ("Supported: portrait"),
+    because it raced the controllers' update, so the app doesn't send one.
+  - The hosting view has an `active` flag. Without it, the inline view never took the layer back and
+    stayed black after full screen closed.
+- **The screen doesn't sleep** while a picture plays in the foreground (`isIdleTimerDisabled`). It
+  can sleep again on pause, background and stop.
+- **Speed** (0.5–2×):
+  - It sets the synchronizer's rate, so picture and voices stay on one clock.
+  - The audio renderer uses `audioTimePitchAlgorithm = .timeDomain`, which Apple describes for speech.
+    Which algorithm sounds better is the user's ear test (PRD `[verify]`).
+  - The pump's wait is divided by the speed. Separation runs at about 46× real time on the phone
+    (BENCHMARKS), so 2× has headroom.
+- **`--system-check` on the simulator: 11 of 12 pass.**
+  - Speeds measured 0.500, 1.500, 2.000 and 1.000.
+  - Now Playing ok; pause sets rate 0 and lets the screen sleep; skip went 41.0 → 51.8 s; scrub to
+    30 s landed at 31.0 s.
+  - Full screen measured 812×375 landscape, and portrait again after closing with the layer back
+    inline.
+  - PiP fails because the simulator doesn't support it. **Not yet run on the iPhone:** PiP, and 2× on
+    the phone. The phone was locked and then unavailable when the story was committed; the check
+    stays open until they run there.
+
 ## Settled `[verify]` items
 
 | PRD item | Result | Evidence |

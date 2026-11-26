@@ -62,7 +62,8 @@ struct RootView: View {
                                        seekCheck: arguments.contains("--seek-check"),
                                        backgroundTest: arguments.contains("--background-test"),
                                        qualityCheck: arguments.contains("--quality-check"),
-                                       wallCheck: arguments.contains("--wall-check"))
+                                       wallCheck: arguments.contains("--wall-check"),
+                                       systemCheck: arguments.contains("--system-check"))
                     }
                 }
             }

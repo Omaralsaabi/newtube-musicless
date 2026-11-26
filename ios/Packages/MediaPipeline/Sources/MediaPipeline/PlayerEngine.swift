@@ -115,6 +115,8 @@ public actor PlayerEngine {
         public var removeMusic: Bool
         public var wantsToPlay: Bool
         public var videoActive: Bool
+        /// The playback speed while playing (0.5–2).
+        public var speed: Float
     }
 
     public struct Configuration: Sendable {
@@ -211,6 +213,7 @@ public actor PlayerEngine {
     private var servedHighMs: Int64 = -1
 
     // Intent and hold.
+    private var speed: Float = 1
     private var wantsToPlay = true
     private var removeMusic = true
     private var debounce = HoldDebounce()
@@ -259,6 +262,8 @@ public actor PlayerEngine {
         self.removeMusic = removeMusic
         wantsToPlay = playing
         renderer.isMuted = configuration.muted
+        // Speed keeps the pitch; the time-domain algorithm is the one Apple describes for speech (US-018).
+        renderer.audioTimePitchAlgorithm = .timeDomain
         synchronizer.addRenderer(renderer)
         if let video { synchronizer.addRenderer(video.renderer) }
         // Our hold logic decides when the clock runs; the synchronizer's own wait for "sufficient
@@ -393,7 +398,7 @@ public actor PlayerEngine {
     public func snapshot() -> Snapshot {
         Snapshot(status: status, position: synchronizer.currentTime().seconds, duration: duration,
                  aheadSeconds: aheadSeconds, videoAheadSeconds: video == nil ? nil : videoAheadSeconds,
-                 removeMusic: removeMusic, wantsToPlay: wantsToPlay, videoActive: videoActive)
+                 removeMusic: removeMusic, wantsToPlay: wantsToPlay, videoActive: videoActive, speed: speed)
     }
 
     /// Stops playback, releases the renderers and closes the stage.
@@ -908,8 +913,15 @@ public actor PlayerEngine {
         }
     }
 
+    /// Playback speed, 0.5–2 (US-018): the synchronizer's rate, so the picture and the voices stay together.
+    public func setSpeed(_ value: Float) {
+        speed = min(max(value, 0.5), 2)
+        log("voices speed=\(speed)")
+        applyRate()
+    }
+
     private func applyRate() {
-        let target: Float = wantsToPlay && !debounce.holding && failure == nil && !ended && !closed ? 1 : 0
+        let target: Float = wantsToPlay && !debounce.holding && failure == nil && !ended && !closed ? speed : 0
         if synchronizer.rate != target { synchronizer.rate = target }
     }
 
@@ -952,6 +964,7 @@ public actor PlayerEngine {
         guard synchronizer.rate > 0 else { return .milliseconds(250) }
         var slack = aheadSeconds - configuration.holdBelow
         if videoCounts { slack = min(slack, videoAheadSeconds - configuration.holdBelow) }
+        slack /= Double(max(speed, 0.5))  // media seconds go faster than wall seconds above 1×
         return .milliseconds(Int(max(0.025, min(slack, 0.5)) * 1000))
     }
 

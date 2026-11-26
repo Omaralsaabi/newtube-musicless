@@ -1,4 +1,6 @@
 import AVFoundation
+import AVKit
+import MediaPlayer
 import Foundation
 import MediaPipeline
 import MusiclessCore
@@ -12,7 +14,7 @@ import YouTubeEngine
 /// switch (a flush, the engine is kept), "Preparing voices…" while holding, and the voice models'
 /// progress while playback waits for them. The watch page proper is US-020.
 @MainActor @Observable
-final class WatchDebug {
+final class WatchDebug: SystemPlaybackTarget {
     struct Preset: Identifiable, Hashable {
         let id: String
         let title: String
@@ -47,6 +49,14 @@ final class WatchDebug {
     @ObservationIgnored private let models: ModelStore
     @ObservationIgnored private var engine: PlayerEngine?
     @ObservationIgnored private var playing: PlayingFiles?
+    @ObservationIgnored private var pip: PictureInPicture?
+    @ObservationIgnored private var nowPlayingTitle = ""
+    @ObservationIgnored private var nowPlayingArtwork: URL?
+    /// The speeds the picker offers (US-018).
+    static let speeds: [Float] = [0.5, 0.75, 1, 1.25, 1.5, 2]
+    private(set) var speed: Float = 1
+    /// The full-screen landscape view is showing.
+    var fullScreen = false
     @ObservationIgnored private var poll: Task<Void, Never>?
     @ObservationIgnored private var tapAt: ContinuousClock.Instant?
     @ObservationIgnored private var playerMs = 0
@@ -61,13 +71,27 @@ final class WatchDebug {
         }
         // Background without PiP (PRD §4.2): stop feeding the picture; catch it up on the way back.
         let center = NotificationCenter.default
+        // With PiP running (it starts as the app leaves), the picture keeps decoding.
         for (name, active) in [(UIApplication.didEnterBackgroundNotification, false),
                                (UIApplication.willEnterForegroundNotification, true),
                                (UIApplication.didBecomeActiveNotification, true)] {
             observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
-                    guard let engine = self?.engine else { return }
-                    Task { await engine.setVideoActive(active) }
+                    guard let self, let engine = self.engine else { return }
+                    if active {
+                        Task { await engine.setVideoActive(true) }
+                        self.updateIdleTimer()
+                        return
+                    }
+                    UIApplication.shared.isIdleTimerDisabled = false
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(600))  // PiP's will-start comes during the transition
+                        if self.pip?.isActive == true {
+                            AppLog.player.info("video stays on (pip) appState=\(AppActivity.logValue)")
+                        } else {
+                            await engine.setVideoActive(false)
+                        }
+                    }
                 }
             })
         }
@@ -138,7 +162,16 @@ final class WatchDebug {
                 layer.backgroundColor = UIColor.black.cgColor
                 self.layer = layer
                 video = VideoInput(source: picture, fetcher: Self.fetcher(picture), renderer: layer.sampleBufferRenderer)
+                pip = PictureInPicture(layer: layer, target: self)
+                // PiP closed while the app is away: the background rule applies again.
+                pip?.onStop = { [weak self] in
+                    guard let engine = self?.engine, UIApplication.shared.applicationState == .background else { return }
+                    Task { await engine.setVideoActive(false) }
+                }
             }
+            nowPlayingTitle = media.title
+            nowPlayingArtwork = media.thumbnail
+            NowPlaying.shared.begin(target: self, title: media.title, author: media.author, duration: nil, artwork: media.thumbnail)
             var configuration = PlayerEngine.Configuration()
             configuration.audioDelay = media.audioDelay
             if syntheticWall { configuration.syntheticWallSeconds = 60 }
@@ -155,6 +188,7 @@ final class WatchDebug {
                 holdLog: { AppLog.musicless.info($0) },
                 onChange: { [weak self] snapshot in Task { @MainActor in self?.changed(snapshot) } })
             self.engine = engine
+            if speed != 1 { await engine.setSpeed(speed) }
             resolving = false
             AppLog.player.info("voices resolved video=\(videoID) title=\"\(media.title)\" video=\"\(media.videoLabel ?? "none")\" "
                                + "qualities=\(media.videoOptions.map(\.label).joined(separator: ",")) playerMs=\(media.playerMs)")
@@ -187,6 +221,33 @@ final class WatchDebug {
         await seek(to: snapshot.position + seconds)
     }
 
+    func setSpeed(_ value: Float) async {
+        speed = value
+        await engine?.setSpeed(value)
+        if let engine { changed(await engine.snapshot()) }
+    }
+
+    func startPictureInPicture() { pip?.start() }
+
+    // MARK: SystemPlaybackTarget (lock screen, Control Center, PiP)
+
+    var systemSnapshot: PlayerEngine.Snapshot? { snapshot }
+    func systemPlay() { Task { await engine?.play(); await refresh() } }
+    func systemPause() { Task { await engine?.pause(); await refresh() } }
+    func systemSkip(_ seconds: Double) { Task { await skip(seconds); await refresh() } }
+    func systemSeek(to seconds: Double) { Task { await seek(to: seconds); await refresh() } }
+
+    private func refresh() async {
+        guard let engine else { return }
+        changed(await engine.snapshot())
+    }
+
+    private func updateIdleTimer() {
+        // The screen doesn't sleep while a picture plays in the foreground (US-018).
+        UIApplication.shared.isIdleTimerDisabled = layer != nil && snapshot?.status == .playing
+            && UIApplication.shared.applicationState == .active
+    }
+
     func setRemoveMusic(_ on: Bool) async {
         removeMusic = on
         await engine?.setRemoveMusic(on)
@@ -211,9 +272,13 @@ final class WatchDebug {
         if let engine {
             AppLog.player.info("voices stop reason=\(reason) appState=\(AppActivity.logValue)")
             self.engine = nil
+            pip?.stop()
+            pip = nil
+            NowPlaying.shared.end()
             await engine.close()
             PlaybackAudioSession.shared.deactivate()
         }
+        UIApplication.shared.isIdleTimerDisabled = false
         layer = nil
         snapshot = nil
         qualities = []
@@ -302,6 +367,114 @@ final class WatchDebug {
         AppLog.player.info("wall-check done passed=\(passed)/\(Self.presets.count)")
     }
 
+    /// US-018's `--system-check`: each speed against the clock, Now Playing and the remote-command
+    /// handlers, the idle timer, full screen, then PiP started by leaving for the Files app (bring the
+    /// app back with `devicectl … process launch` without `--terminate-existing`).
+    func runSystemCheck() async {
+        func log(_ line: String) { AppLog.player.info("system-check \(line) appState=\(AppActivity.logValue)") }
+        func current() async -> PlayerEngine.Snapshot? { await engine?.snapshot() }
+        func wait(_ seconds: Double) async { try? await Task.sleep(for: .milliseconds(Int(seconds * 1000))) }
+        while snapshot?.status != .playing { await wait(0.2) }
+        await wait(4)
+        var passed = 0, total = 0
+        func result(_ ok: Bool) -> String {
+            total += 1
+            if ok { passed += 1 }
+            return ok ? "ok" : "failed"
+        }
+
+        // Speeds: the playhead's advance over 6 s of wall time.
+        for value in [0.5, 1.5, 2, 1] as [Float] {
+            await setSpeed(value)
+            await wait(1)
+            guard let start = await current() else { return }
+            let began = ContinuousClock.now
+            await wait(6)
+            guard let end = await current() else { return }
+            let measured = (end.position - start.position) / ((ContinuousClock.now - began) / .milliseconds(1) / 1000)
+            let ok = abs(measured - Double(value)) / Double(value) < 0.05
+            log("speed=\(value) measured=\(String(format: "%.3f", measured)) status=\(end.status) result=\(result(ok))")
+        }
+
+        // Now Playing (the system extrapolates the position from the last elapsed and rate), and the
+        // handlers the remote commands call.
+        func published() -> (elapsed: Double, rate: Double, info: [String: Any]) {
+            let info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+            let rate = (info[MPNowPlayingInfoPropertyPlaybackRate] as? NSNumber)?.doubleValue ?? -1
+            let elapsed = (info[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? NSNumber)?.doubleValue ?? -1
+            return (elapsed + max(rate, 0) * NowPlaying.shared.secondsSincePublish, rate, info)
+        }
+        let now = published(), position = await current()?.position ?? 0
+        let infoOK = now.info[MPMediaItemPropertyTitle] as? String == title && now.info[MPMediaItemPropertyArtist] != nil
+            && now.info[MPMediaItemPropertyPlaybackDuration] != nil && abs(now.elapsed - position) < 1 && now.rate == 1
+        log("now-playing title=\(now.info[MPMediaItemPropertyTitle] != nil ? "y" : "n") artist=\(now.info[MPMediaItemPropertyArtist] != nil ? "y" : "n") "
+            + "artwork=\(now.info[MPMediaItemPropertyArtwork] != nil ? "y" : "n") duration=\(now.info[MPMediaItemPropertyPlaybackDuration] ?? "none") "
+            + "elapsed=\(String(format: "%.2f", now.elapsed)) position=\(String(format: "%.2f", position)) rate=\(now.rate) "
+            + "publishes=\(NowPlaying.shared.publishes) result=\(result(infoOK))")
+        let idlePlaying = UIApplication.shared.isIdleTimerDisabled
+        systemPause()
+        await wait(1)
+        let pausedRate = published().rate
+        let paused = await current()
+        let idlePaused = UIApplication.shared.isIdleTimerDisabled
+        log("pause wantsToPlay=\(paused?.wantsToPlay ?? true) rate=\(pausedRate) idleTimerOff=\(idlePaused) "
+            + "result=\(result(paused?.wantsToPlay == false && pausedRate == 0 && !idlePaused))")
+        systemPlay()
+        await wait(1.5)
+        log("idle-timer playing=\(idlePlaying ? "off" : "on") paused=\(idlePaused ? "off" : "on") result=\(result(idlePlaying && !idlePaused))")
+        let before = await current()?.position ?? 0
+        systemSkip(10)
+        await wait(2)
+        let skipped = await current()?.position ?? 0
+        log("skip from=\(String(format: "%.1f", before)) to=\(String(format: "%.1f", skipped)) result=\(result(skipped - before > 10 && skipped - before < 13.5))")
+        systemSeek(to: 30)
+        await wait(2)
+        let sought = await current()?.position ?? 0
+        log("scrub to=30 at=\(String(format: "%.1f", sought)) result=\(result(sought >= 30 && sought < 33.5))")
+
+        // Full screen: the scene turns landscape, the layer fills it, and back.
+        func orientation() -> String {
+            guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else { return "none" }
+            return scene.effectiveGeometry.interfaceOrientation.isLandscape ? "landscape" : "portrait"
+        }
+        fullScreen = true
+        await wait(3)
+        let landscape = orientation(), bounds = layer?.bounds.size ?? .zero
+        log("full-screen showing")
+        await wait(2)
+        log("full-screen orientation=\(landscape) layer=\(Int(bounds.width))x\(Int(bounds.height)) "
+            + "result=\(result(landscape == "landscape" && bounds.width > bounds.height))")
+        fullScreen = false
+        await wait(3)
+        let inline = layer?.superlayer != nil && (layer?.bounds.width ?? 0) < (layer?.bounds.height ?? 0) * 3
+        log("full-screen closed orientation=\(orientation()) layer=\(Int(layer?.bounds.width ?? 0))x\(Int(layer?.bounds.height ?? 0)) "
+            + "hosted=\(layer?.superlayer != nil) result=\(result(orientation() == "portrait" && inline))")
+        await wait(2)
+
+        // PiP: starts on its own as the app leaves; the picture keeps decoding while away.
+        log("pip supported=\(AVPictureInPictureController.isPictureInPictureSupported()) controller=\(pip != nil) possible=\(pip?.isPossible == true)")
+        await UIApplication.shared.open(URL(string: "shareddocuments://")!)
+        while UIApplication.shared.applicationState == .active { await wait(0.1) }
+        await wait(3)
+        let started = pip?.isActive == true
+        var aheads: [Double] = []
+        let awayStart = await current()?.position ?? 0
+        for _ in 0..<8 {
+            await wait(1)
+            if let now = await current() { aheads.append(now.videoActive ? now.videoAheadSeconds ?? 0 : -1) }
+        }
+        let awayEnd = await current()?.position ?? 0
+        let decoding = !aheads.isEmpty && aheads.allSatisfy { $0 > 0 }
+        log("pip started=\(started) videoAhead=\(aheads.map { String(format: "%.2f", $0) }) moved=\(String(format: "%.1f", awayEnd - awayStart)) "
+            + "result=\(result(started && decoding && awayEnd - awayStart > 6))")
+        log("waiting for the app to come back")
+        while UIApplication.shared.applicationState != .active { await wait(0.2) }
+        pip?.stop()
+        await wait(3)
+        log("back pip=\(pip?.isActive == true) status=\(snapshot.map { "\($0.status)" } ?? "none")")
+        log("done passed=\(passed)/\(total)")
+    }
+
     /// `--quality-check`: after 8 s of playback, step through every quality, 8 s each.
     func runQualityCheck() async {
         while snapshot?.status != .playing { try? await Task.sleep(for: .milliseconds(200)) }
@@ -315,6 +488,9 @@ final class WatchDebug {
 
     private func changed(_ snapshot: PlayerEngine.Snapshot) {
         self.snapshot = snapshot
+        NowPlaying.shared.update(snapshot)
+        pip?.invalidate()
+        updateIdleTimer()
         if snapshot.status == .playing, let tapAt {
             self.tapAt = nil
             AppLog.player.info("voices tap-to-first-audio ms=\(Int((ContinuousClock.now - tapAt) / .milliseconds(1))) "
@@ -343,6 +519,7 @@ struct WatchDebugView: View {
     var backgroundTest = false
     var qualityCheck = false
     var wallCheck = false
+    var systemCheck = false
     @State private var link = ""
     /// The seek bar's value while it is being dragged; nil otherwise.
     @State private var scrub: Double?
@@ -351,7 +528,7 @@ struct WatchDebugView: View {
         List {
             Section {
                 if let layer = watch.layer {
-                    VideoLayerView(layer: layer)
+                    VideoLayerView(layer: layer, active: !watch.fullScreen)
                         .aspectRatio(16 / 9, contentMode: .fit)
                         .overlay { overlay }
                         .listRowInsets(EdgeInsets())
@@ -376,6 +553,17 @@ struct WatchDebugView: View {
                     controls
                     Toggle("Remove music", isOn: Binding(get: { watch.removeMusic },
                                                          set: { on in Task { await watch.setRemoveMusic(on) } }))
+                    Picker("Speed", selection: Binding(get: { watch.speed }, set: { value in Task { await watch.setSpeed(value) } })) {
+                        ForEach(WatchDebug.speeds, id: \.self) { value in Text(value == 1 ? "Normal" : "\(value.formatted())×").tag(value) }
+                    }
+                    if watch.layer != nil {
+                        HStack {
+                            Button("Full screen") { watch.fullScreen = true }
+                            Spacer()
+                            Button("Picture in Picture") { watch.startPictureInPicture() }
+                        }
+                        .buttonStyle(.borderless)
+                    }
                     if !watch.qualities.isEmpty {
                         // Selected by itag: SwiftUI may read the binding once more after `stop()` empties the list.
                         Picker("Quality", selection: Binding(get: { watch.quality?.itag ?? watch.qualities.first?.itag ?? 0 },
@@ -413,6 +601,10 @@ struct WatchDebugView: View {
         }
         .navigationTitle("Watch (debug)")
         .navigationBarTitleDisplayMode(.inline)
+        .fullScreenCover(isPresented: Binding(get: { watch.fullScreen }, set: { watch.fullScreen = $0 })) {
+            if let layer = watch.layer { FullScreenVideo(watch: watch, layer: layer) }
+        }
+        .onChange(of: watch.fullScreen) { _, on in FullScreenVideo.rotate(on ? .landscape : .portrait) }
         .task {
             if wallCheck {
                 await watch.runWallCheck()
@@ -427,6 +619,7 @@ struct WatchDebugView: View {
             }
             if backgroundTest { await watch.runBackgroundTest() }
             if qualityCheck { await watch.runQualityCheck() }
+            if systemCheck { await watch.runSystemCheck() }
         }
     }
 
@@ -533,22 +726,28 @@ struct WatchDebugView: View {
 /// Hosts the engine's display layer (the app keeps the layer; the engine feeds its renderer).
 struct VideoLayerView: UIViewRepresentable {
     let layer: AVSampleBufferDisplayLayer
+    /// Whether this view should hold the layer: the inline view and the full-screen one share it, and
+    /// the change of this flag is what makes SwiftUI call `updateUIView` so the layer moves back.
+    var active = true
 
     func makeUIView(context: Context) -> HostView {
         let view = HostView()
         view.backgroundColor = .black
-        view.host(layer)
+        if active { view.host(layer) }
         return view
     }
 
-    func updateUIView(_ view: HostView, context: Context) { view.host(layer) }
+    func updateUIView(_ view: HostView, context: Context) {
+        if active { view.host(layer) }
+    }
 
     final class HostView: UIView {
         private var hosted: CALayer?
 
         func host(_ layer: CALayer) {
-            guard hosted !== layer else { return }
-            hosted?.removeFromSuperlayer()
+            // Also when the layer was moved away (the full-screen view hosts the same layer).
+            guard hosted !== layer || layer.superlayer !== self.layer else { return }
+            if hosted !== layer, hosted?.superlayer === self.layer { hosted?.removeFromSuperlayer() }
             self.layer.addSublayer(layer)
             hosted = layer
             setNeedsLayout()
@@ -560,6 +759,63 @@ struct VideoLayerView: UIViewRepresentable {
             CATransaction.setDisableActions(true)
             hosted?.frame = bounds
             CATransaction.commit()
+        }
+    }
+}
+
+/// Full-screen landscape (US-018): the same display layer, rotated to landscape; a tap shows the
+/// controls. Closing it puts the layer back in the screen.
+struct FullScreenVideo: View {
+    let watch: WatchDebug
+    let layer: AVSampleBufferDisplayLayer
+    @Environment(\.dismiss) private var dismiss
+    @State private var controls = true
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            VideoLayerView(layer: layer, active: watch.fullScreen).ignoresSafeArea()
+            if controls {
+                VStack {
+                    HStack {
+                        Button { dismiss() } label: { Image(systemName: "xmark").font(.title2) }
+                            .accessibilityLabel("Close full screen")
+                        Spacer()
+                        Text(watch.title).lineLimit(1).font(.headline)
+                        Spacer()
+                    }
+                    Spacer()
+                    HStack(spacing: 40) {
+                        Button { Task { await watch.skip(-10) } } label: { Image(systemName: "gobackward.10") }
+                        Button { Task { await watch.togglePlay() } } label: {
+                            Image(systemName: watch.snapshot?.wantsToPlay == false ? "play.fill" : "pause.fill")
+                        }
+                        Button { Task { await watch.skip(10) } } label: { Image(systemName: "goforward.10") }
+                    }
+                    .font(.largeTitle)
+                    .environment(\.layoutDirection, .leftToRight)
+                    Spacer()
+                }
+                .padding()
+                .foregroundStyle(.white)
+                .background(.black.opacity(0.35))
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { controls.toggle() }
+        .statusBarHidden()
+    }
+
+    /// The orientation lock changes, and telling the controllers so rotates the scene: the current
+    /// orientation is no longer allowed. (An explicit `requestGeometryUpdate` on top of it raced the
+    /// controllers' update and was refused, though the rotation happened.)
+    static func rotate(_ orientations: UIInterfaceOrientationMask) {
+        guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first else { return }
+        AppDelegate.orientations = orientations
+        var controller = scene.windows.first { $0.isKeyWindow }?.rootViewController
+        while let current = controller {
+            current.setNeedsUpdateOfSupportedInterfaceOrientations()
+            controller = current.presentedViewController
         }
     }
 }
