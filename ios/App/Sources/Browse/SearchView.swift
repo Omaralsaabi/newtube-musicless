@@ -85,12 +85,21 @@ struct SearchView: View {
         .scrollDismissesKeyboard(.immediately)
     }
 
+    /// Recent searches matching what is being typed. None once the field holds the submitted query:
+    /// a search adds its query to the history first, so it would match itself, and while the field
+    /// stays active the suggestions cover the results.
     @ViewBuilder private var suggestions: some View {
-        ForEach(model.history.matching(model.text), id: \.self) { query in
-            Button { Task { await model.submit(query) } } label: {
-                Label(query, systemImage: "clock.arrow.circlepath")
+        if model.text != model.submitted {
+            ForEach(model.history.matching(model.text), id: \.self) { query in
+                Button {
+                    // The keyboard goes too, as it does for the keyboard's Search key.
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                    Task { await model.submit(query) }
+                } label: {
+                    Label(query, systemImage: "clock.arrow.circlepath")
+                }
+                .foregroundStyle(.primary)
             }
-            .foregroundStyle(.primary)
         }
     }
 
