@@ -9,6 +9,7 @@ final class AppSettings {
 
     private enum Key {
         static let showUpNext = "showUpNext"
+        static let showHome = "showHome"
     }
 
     @ObservationIgnored private let defaults: UserDefaults
@@ -19,9 +20,16 @@ final class AppSettings {
         didSet { defaults.set(showUpNext, forKey: Key.showUpNext) }
     }
 
+    /// The Home tab. Off by default: the fork starts without it (MobileMainApplication's first run:
+    /// "YouTube's signed-out Home can't be filtered"), and the app opens on Subscriptions anyway.
+    var showHome: Bool {
+        didSet { defaults.set(showHome, forKey: Key.showHome) }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         // `--up-next` (debug) shows it for this launch without saving (didSet doesn't run in init).
         showUpNext = ProcessInfo.processInfo.arguments.contains("--up-next") || defaults.object(forKey: Key.showUpNext) as? Bool ?? false
+        showHome = defaults.object(forKey: Key.showHome) as? Bool ?? false
     }
 }

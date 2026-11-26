@@ -102,11 +102,22 @@ extension FeedParser {
         var items: [FeedItem] = []
         var continuation: String?
         for section in list["contents"].array ?? [] {
+            // Shelf.getItems: a shelf's list (horizontal, vertical or a grid), a bare grid, or an
+            // item section (the Subscriptions page's rows of 3).
             let shelf = section["shelfRenderer"]
-            guard shelf.exists else { continue }
-            let content = shelf["content"]["horizontalListRenderer"].exists ? shelf["content"]["horizontalListRenderer"]
-                : shelf["content"]["verticalListRenderer"]
-            items += (content["items"].array ?? []).compactMap(item)
+            let content: JSONNode
+            if shelf.exists {
+                content = shelf["content"]["horizontalListRenderer"].exists ? shelf["content"]["horizontalListRenderer"]
+                    : shelf["content"]["verticalListRenderer"].exists ? shelf["content"]["verticalListRenderer"]
+                    : shelf["content"]["gridRenderer"]
+            } else if section["gridRenderer"].exists {
+                content = section["gridRenderer"]
+            } else if section["itemSectionRenderer"].exists {
+                content = section["itemSectionRenderer"]
+            } else {
+                continue  // searchBarRenderer, promoShelfRenderer, …
+            }
+            items += ((content["items"].array ?? content["contents"].array) ?? []).compactMap(item)
             if continuation == nil { continuation = Self.continuation(content) }
         }
         return FeedPage(items: items, continuation: continuation ?? Self.continuation(list))

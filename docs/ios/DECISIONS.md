@@ -1043,6 +1043,31 @@ Personal Team test (Q8, D15) moves with them: there is still no paid-only capabi
   calls that the owner's check).
 - New launch flag: `--sign-in` opens the sheet.
 
+### D54. Subscriptions and Home — US-023
+
+- **The feeds** are `/browse` over the TV client with the account (BrowseApiHelper): Subscriptions
+  `FEsubscriptions`, Home `default`. They throw when signed out.
+- **The parser** follows BrowseHelper.kt's `BrowseResultTV`:
+  - Subscriptions is a `tvSecondaryNavRenderer` whose tabs are "All" and one per channel. The feed
+    is the tab that browses `FEsubscriptions`, else the first (`getSubscriptionsTab`).
+  - Home is a `tvSurfaceContentRenderer`.
+  - Either one holds a `gridRenderer` or a `sectionListRenderer`. The section reader now also takes
+    bare grids, item sections (the Subscriptions page's rows of 3) and grids inside shelves.
+  - **Untested against a real answer:** a signed-in answer can't be recorded without an account, so
+    the tests build Subscriptions and Home in that shape from recorded tiles. The recorded
+    signed-out Home is a search bar only: an empty page.
+- **The fork's defaults** (MobileMainApplication's first run):
+  - Home is off ("YouTube's signed-out Home can't be filtered") and the app boots on Subscriptions.
+  - "Show Home" (on the You tab until US-024) adds a Home tab before Subscriptions; the app still
+    opens on Subscriptions.
+  - Signed out, Subscriptions shows a sign-in prompt that opens the sign-in sheet.
+- **The same first run also** sets the app language to Arabic and starts the voice-model download.
+  The language is US-025's (iOS uses its per-app language page, PRD); the download is US-024's.
+- The feeds follow the phone's list rules (`FeedList`), page through `gridContinuation` or
+  `sectionListContinuation`, and refresh by pulling down. Each tab has its own navigation stack;
+  the player stops when no stack shows a watch page.
+- **The user's to check:** the feed itself, once signed in.
+
 ## Settled `[verify]` items
 
 | PRD item | Result | Evidence |

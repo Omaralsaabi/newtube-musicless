@@ -10,11 +10,16 @@ struct RootView: View {
     @State private var tab: Tab = .subscriptions
     @State private var path: [Route] = []
     @State private var searchPath: [BrowseRoute] = []
+    @State private var subscriptionsPath: [BrowseRoute] = []
+    @State private var homePath: [BrowseRoute] = []
+    @State private var subscriptions = FeedModel(feed: .subscriptions)
+    @State private var home = FeedModel(feed: .home)
+    private let settings = AppSettings.shared
     @State private var search = SearchModel(browse: PlaybackServices.shared.browse)
     /// The watch screen's player; it outlives the view and stops when its route is popped.
     @State private var watch: PlayerModel?
 
-    enum Tab: Hashable { case subscriptions, search, you }
+    enum Tab: Hashable { case home, subscriptions, search, you }
 
     enum Route: Hashable {
         case probe
@@ -26,7 +31,15 @@ struct RootView: View {
 
     var body: some View {
         TabView(selection: $tab) {
-            SubscriptionsPlaceholder()
+            if settings.showHome {
+                FeedView(title: "Home", systemImage: "house", model: home, account: AccountModel.shared, path: $homePath) {
+                    AnyView(destination($0, path: $homePath))
+                }
+                .tabItem { Label("Home", systemImage: "house") }
+                .tag(Tab.home)
+            }
+            FeedView(title: "Subscriptions", systemImage: "play.square.stack", model: subscriptions, account: AccountModel.shared,
+                     path: $subscriptionsPath) { AnyView(destination($0, path: $subscriptionsPath)) }
                 .tabItem { Label("Subscriptions", systemImage: "play.square.stack") }
                 .tag(Tab.subscriptions)
             SearchView(model: search, path: $searchPath) { AnyView(destination($0, path: $searchPath)) }
@@ -39,6 +52,8 @@ struct RootView: View {
         .onAppear(perform: launch)
         .onChange(of: path) { _, _ in stopPlayerIfHidden() }
         .onChange(of: searchPath) { _, _ in stopPlayerIfHidden() }
+        .onChange(of: subscriptionsPath) { _, _ in stopPlayerIfHidden() }
+        .onChange(of: homePath) { _, _ in stopPlayerIfHidden() }
         .onChange(of: models.status) { _, status in
             AppLog.musicless.info("Model status \(status.logValue)")
         }
@@ -58,7 +73,9 @@ struct RootView: View {
 
     private func stopPlayerIfHidden() {
         let showsVoices = path.contains { if case .voices = $0 { true } else { false } }
-        let showsWatch = searchPath.contains { if case .watch = $0 { true } else { false } }
+        let showsWatch = [searchPath, subscriptionsPath, homePath].contains { stack in
+            stack.contains { if case .watch = $0 { true } else { false } }
+        }
         if !showsVoices, !showsWatch, let watch, watch.isActive { Task { await watch.stop(reason: "left the screen") } }
     }
 
@@ -99,6 +116,9 @@ struct RootView: View {
                 Section("Playback") {
                     Toggle(isOn: Binding(get: { AppSettings.shared.showUpNext }, set: { AppSettings.shared.showUpNext = $0 })) {
                         Label("Show Up next", systemImage: "list.bullet.below.rectangle")
+                    }
+                    Toggle(isOn: Binding(get: { AppSettings.shared.showHome }, set: { AppSettings.shared.showHome = $0 })) {
+                        Label("Show Home", systemImage: "house")
                     }
                 }
             }
@@ -202,21 +222,6 @@ struct RootView: View {
             searchPath = [.watch(videoID: arguments[index + 1])]
         }
         if !path.isEmpty || arguments.contains("--sign-in") { tab = .you }
-    }
-}
-
-/// Signed out, Subscriptions asks for sign-in (US-023); until sign-in exists (US-022), it says so.
-struct SubscriptionsPlaceholder: View {
-    var body: some View {
-        NavigationStack {
-            ContentUnavailableView {
-                Label("Subscriptions", systemImage: "play.square.stack")
-            } description: {
-                Text("Sign in to see videos from the channels you follow.")
-            }
-            .navigationTitle("Subscriptions")
-            .navigationBarTitleDisplayMode(.inline)
-        }
     }
 }
 

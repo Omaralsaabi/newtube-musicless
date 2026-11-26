@@ -19,3 +19,4 @@ names). `BrowseParserTests` reads them; `fixturesCarryNoAddressOrVisitor` re-che
 - `channel_blender_videos_continuation.json`: the Videos shelf's next page (`horizontalListContinuation`).
 - `playlist_open_movies.json`: `/browse` for `VLPL6B3937A5D230E335` (`twoColumnRenderer`:
   `entityMetadataRenderer` and `playlistVideoListRenderer`).
+- `home_signed_out.json`: `/browse` `default` (Home) without an account: a search bar only.
