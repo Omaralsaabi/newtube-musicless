@@ -61,23 +61,13 @@ public enum FeedParser {
     public static func page(_ data: Data) throws -> FeedPage {
         guard let object = try? JSONSerialization.jsonObject(with: data) else { throw BrowseError("not JSON") }
         let root = JSONNode(object)
-        let sections = root["contents"]["sectionListRenderer"]["contents"].array
-            ?? root["continuationContents"]["sectionListContinuation"]["contents"].array
-        guard let sections else {
+        let list = root["contents"]["sectionListRenderer"].exists ? root["contents"]["sectionListRenderer"]
+            : root["continuationContents"]["sectionListContinuation"]
+        guard list["contents"].array != nil else {
             if let alert = root["alerts"][0]["alertRenderer"]["text"].text { throw BrowseError("alert: \(alert)") }
             throw BrowseError("no sections")
         }
-        var items: [FeedItem] = []
-        var continuation: String?
-        for section in sections {
-            let shelf = section["shelfRenderer"]
-            guard shelf.exists else { continue }
-            let list = shelf["content"]["horizontalListRenderer"].exists ? shelf["content"]["horizontalListRenderer"]
-                : shelf["content"]["verticalListRenderer"]
-            items += (list["items"].array ?? []).compactMap(item)
-            if continuation == nil { continuation = Self.continuation(list) }
-        }
-        return FeedPage(items: items, continuation: continuation)
+        return sectionList(list)
     }
 
     static func continuation(_ list: JSONNode) -> String? {

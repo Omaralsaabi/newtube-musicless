@@ -9,3 +9,7 @@ names). `BrowseParserTests` reads them; `fixturesCarryNoAddressOrVisitor` re-che
 - `search_bbb_continuation.json`: that continuation's answer (`continuationContents.sectionListContinuation`).
 - `search_channel_shorts_cluster.json`: "mrbeast": results with channel lockups, a Shorts shelf and
   a `clusterShelfRenderer` (Android drops the cluster: only shelves become sections).
+- `next_bbb.json`: `/next` for Big Buck Bunny (TV client): `videoMetadataRenderer` (title, views, date,
+  owner), the description engagement panel, the comments panel, and the related `pivot` (10 grid
+  shelves of 3 `tileRenderer`s, with a list-level continuation).
+- `next_bbb_continuation.json`: that continuation (11 more shelves, no further page).

@@ -99,6 +99,9 @@ xcrun devicectl device process launch --device "$DEVICE_ID" --terminate-existing
   more pages (the paging and top-up lines are `browse …`). `--rtl` forces right-to-left layout
   (until Arabic is declared, US-025). Simulator screenshots go to `ios/build/screenshots/US-0NN/`
   (gitignored) for the PR.
+- `--watch <id>` (US-020): the watch page for a video; `--up-next` shows the related list for that
+  launch without saving the setting. The player is `Playback/PlayerModel.swift`, shared with the
+  debug watch screen (its checks: `Debug/PlayerChecks.swift`).
 - `/player` goes through `SourceWalker` (US-015, the signed-out lane of Android's walk) and ciphered
   winners through `CipherResolver` (US-016). `WalkReplayTests` replays Android's device walks;
   `ios/tools/solver_oracle.sh` refreshes the solver fixture (needs node) when YouTube ships a new player.

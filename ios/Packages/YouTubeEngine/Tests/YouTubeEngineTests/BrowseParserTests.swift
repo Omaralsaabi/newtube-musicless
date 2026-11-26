@@ -45,6 +45,29 @@ import Testing
         #expect(page.continuation != nil, "the results shelf continues; the Shorts shelf doesn't")
     }
 
+    @Test func watchNextReadsTheMetadataTheDescriptionAndTheRelatedTiles() throws {
+        let next = try FeedParser.watchNext(try Self.fixture("next_bbb"), videoID: "aqz-KE-bpKQ")
+        #expect(next.title == "Big Buck Bunny 60fps 4K - Official Blender Foundation Short Film")
+        #expect(next.channel == "Blender" && next.channelID == "UCSMOQeBJ2RAnuFungnQOxLg")
+        #expect(next.subscribers == "1.26M subscribers")
+        #expect(next.channelAvatar?.host == "yt3.ggpht.com")
+        #expect(next.views == "23,592,420 views" && next.shortViews == "23M views")
+        #expect(next.published == "Published on Nov 10, 2014" && next.age == "12y ago")
+        #expect(next.likes == "110K")
+        #expect(next.description?.hasPrefix("UHD High Frame rate version of the iconic short film by Blender") == true,
+                "the description panel: the TV metadata renderer has none")
+        #expect(next.commentCount == "5.2K" && next.commentsToken?.isEmpty == false)
+        // The pivot: 10 grid shelves of 3 tiles, continued by the list.
+        #expect(next.related.items.count == 30)
+        #expect(next.related.continuation != nil)
+        let first = try #require(next.related.items.first)
+        #expect(first.kind == .video && first.id == "vE57fPUAQh0" && first.title == "The Good Dinosaur -  Best Scenes")
+        #expect(first.channel == "Hinl" && first.duration == "23:57" && first.details == ["19M views", "9 years ago"],
+                "tile lines: the channel, then views and age without the bullet")
+        let more = try FeedParser.page(try Self.fixture("next_bbb_continuation"))
+        #expect(more.items.count >= 30 && more.continuation == nil)
+    }
+
     @Test func anAnswerWithoutSectionsIsAnError() {
         #expect(throws: BrowseError.self) { try FeedParser.page(Data(#"{"estimatedResults":"0"}"#.utf8)) }
         #expect(throws: BrowseError.self) { try FeedParser.page(Data("<html>".utf8)) }

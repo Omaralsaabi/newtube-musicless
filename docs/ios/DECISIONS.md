@@ -919,6 +919,47 @@ Personal Team test (Q8, D15) moves with them: there is still no paid-only capabi
     other runs used HTTP/2 (FR-15 allows both).
   - `--search "shorts funny" --search-more`: paging as above.
 
+### D51. The watch page — US-020
+
+- **`/next`** goes over the TV client (WatchNextService: the browse body with `videoId`; more related
+  videos through the browse continuation on `/next`).
+  - The TV answer's `videoMetadataRenderer` carries the title, views (full and short), the date
+    (published and relative) and the owner (avatar, subscribers, channel id), but **no
+    description**.
+  - The description and likes come from the `video-description-ep-identifier` engagement panel,
+    as in MediaItemMetadataImpl.
+  - The comments panel's first token and count are kept for US-026.
+  - The related videos are the `pivot`: grid shelves of 3 `tileRenderer`s with a list-level
+    continuation (30, then 33 more for Big Buck Bunny).
+  - Fixtures `next_bbb*.json`.
+- **The player model** (formerly the debug screen's `WatchDebug`) is now `PlayerModel` in
+  `Playback/`.
+  - The watch page and the debug watch screen share it; the debug checks are an extension in
+    `Debug/PlayerChecks.swift`.
+  - It knows which video it plays, so going back to a watch page whose video still plays doesn't
+    restart it.
+- **The page:** the player on top at 16:9; under it the title, "views · age", the channel row (it
+  opens the channel), and the description (3 lines; a tap expands it with the date, full views and
+  likes).
+  - The player shows "Preparing voices…" over the frozen frame while holding.
+  - A tap shows the controls, which fade after 3 s of playback: ±10 s, play/pause, the seek bar,
+    full screen, and a gear menu with Remove music, quality, speed and Picture in Picture
+    (Android's gear-menu row).
+  - Controls and the seek bar stay left to right in Arabic (time runs that way).
+- **The musicless fork's defaults** (`BuildConfig.MUSICLESS_FORK` in the Android prefs):
+  - **Up next is hidden** (PlayerTweaksData `mIsSuggestionsDisabled` = true). "Show Up next" turns
+    it on: on the You tab now, in Settings with US-024. The related list follows the phone's list
+    rules (`FeedList`).
+  - **A video that ends stays paused** (PlayerData `PLAYBACK_MODE_PAUSE`). The engine stops at the
+    end; the center button becomes Replay (seek to 0 and play), and so does the lock screen's play.
+- **Full screen** is the same landscape cover as US-018, on the watch page.
+- **iPhone:** `--watch jNQXAC9IVRw --up-next` (19 s):
+  - the walk took 271 ms and `/next` 583 ms (30 related, description, comments token);
+  - first voices 1,183 ms after the tap;
+  - `voices ended at=19.04`, and nothing played after it.
+- New launch flags: `--watch <id>` (the watch page) and `--up-next` (Up next for that launch, not
+  saved).
+
 ## Settled `[verify]` items
 
 | PRD item | Result | Evidence |

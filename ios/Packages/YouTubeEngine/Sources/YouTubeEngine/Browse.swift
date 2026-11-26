@@ -47,6 +47,24 @@ public struct BrowseClient: Sendable {
         return page
     }
 
+    /// `/next` for a video (WatchNextApiHelper.getWatchNextQuery over the TV client).
+    public func next(videoID: String) async throws -> WatchNext {
+        let start = ContinuousClock.now
+        let next = try FeedParser.watchNext(try await post("next", ["videoId": videoID]), videoID: videoID)
+        log("browse next video=\(videoID) related=\(next.related.items.count) continuation=\(next.related.continuation == nil ? "n" : "y") "
+            + "description=\(next.description == nil ? "n" : "y") comments=\(next.commentsToken == nil ? "n" : "y") "
+            + "ms=\(Int((ContinuousClock.now - start) / .milliseconds(1)))")
+        return next
+    }
+
+    /// More related videos (WatchNextService.continueGroup: the browse continuation body on `/next`).
+    public func continueNext(_ token: String) async throws -> FeedPage {
+        let start = ContinuousClock.now
+        let page = try FeedParser.page(try await post("next", ["continuation": token]))
+        logPage("next-continuation", page, start: start, extra: nil)
+        return page
+    }
+
     /// One POST, retried once on a transport error or a 5xx (SearchService2 retries with a cloned
     /// call). A 4xx is an answer, not retried.
     func post(_ endpoint: String, _ fields: [String: String]) async throws -> Data {

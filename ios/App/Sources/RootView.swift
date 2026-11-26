@@ -12,7 +12,7 @@ struct RootView: View {
     @State private var searchPath: [BrowseRoute] = []
     @State private var search = SearchModel(browse: PlaybackServices.shared.browse)
     /// The watch screen's player; it outlives the view and stops when its route is popped.
-    @State private var watch: WatchDebug?
+    @State private var watch: PlayerModel?
 
     enum Tab: Hashable { case subscriptions, search, you }
 
@@ -29,7 +29,7 @@ struct RootView: View {
             SubscriptionsPlaceholder()
                 .tabItem { Label("Subscriptions", systemImage: "play.square.stack") }
                 .tag(Tab.subscriptions)
-            SearchView(model: search, path: $searchPath) { AnyView(destination($0)) }
+            SearchView(model: search, path: $searchPath) { AnyView(destination($0, path: $searchPath)) }
                 .tabItem { Label("Search", systemImage: "magnifyingglass") }
                 .tag(Tab.search)
             you
@@ -44,12 +44,11 @@ struct RootView: View {
         }
     }
 
-    /// A list's tap: the player for now (the watch page is US-020), the channel and playlist pages
-    /// (US-021).
-    @ViewBuilder private func destination(_ route: BrowseRoute) -> some View {
+    /// A list's tap: the watch page (US-020), the channel and playlist pages (US-021).
+    @ViewBuilder private func destination(_ route: BrowseRoute, path: Binding<[BrowseRoute]>) -> some View {
         switch route {
         case .watch(let videoID):
-            if let watch { WatchDebugView(watch: watch, autoPlay: (videoID, 0)) }
+            if let watch { WatchView(videoID: videoID, player: watch, path: path) }
         case .channel(_, let title), .playlist(_, let title):
             ContentUnavailableView(title, systemImage: "person.crop.rectangle.stack", description: Text("Coming soon."))
         }
@@ -91,6 +90,12 @@ struct RootView: View {
                     }
                     ModelStatusRow()
                 }
+                // Until Settings (US-024) has its own screen.
+                Section("Playback") {
+                    Toggle(isOn: Binding(get: { AppSettings.shared.showUpNext }, set: { AppSettings.shared.showUpNext = $0 })) {
+                        Label("Show Up next", systemImage: "list.bullet.below.rectangle")
+                    }
+                }
             }
             .navigationTitle("You")
             .navigationDestination(for: Route.self) { route in
@@ -115,7 +120,7 @@ struct RootView: View {
 
     /// Launch flags open their screen (on the You tab) or start their check.
     private func launch() {
-        if watch == nil { watch = WatchDebug(models: models) }
+        if watch == nil { watch = PlayerModel(models: models) }
         PlaybackServices.shared.warmUp()
         AppLog.probe.info("launch version=\(BuildInfo.version) build=\(BuildInfo.build) commit=\(BuildInfo.commit)")
         // `--run-probe` opens the probe at launch, so it can be captured without touching the phone:
@@ -148,14 +153,14 @@ struct RootView: View {
             let ids = arguments[(index + 1)...].prefix { !$0.hasPrefix("--") }
             let seconds = arguments.firstIndex(of: "--sync-seconds")
                 .flatMap { arguments.indices.contains($0 + 1) ? Double(arguments[$0 + 1]) : nil } ?? 30
-            Task { await SyncCheck.runDelay(videoIDs: ids.isEmpty ? WatchDebug.presets.map(\.id) + SyncCheck.candidates : Array(ids),
+            Task { await SyncCheck.runDelay(videoIDs: ids.isEmpty ? PlayerModel.presets.map(\.id) + SyncCheck.candidates : Array(ids),
                                             seconds: seconds) }
         }
         // `--voices [<id>] [--voices-at <seconds>]` plays a video's voices at launch (US-012).
         if path.isEmpty, arguments.contains("--wall-check") { path = [.voices(id: nil, at: 0)] }
         if path.isEmpty, let index = arguments.firstIndex(of: "--voices") {
             let next = arguments.indices.contains(index + 1) ? arguments[index + 1] : ""
-            let id = next.hasPrefix("--") || next.isEmpty ? WatchDebug.presets[0].id : next
+            let id = next.hasPrefix("--") || next.isEmpty ? PlayerModel.presets[0].id : next
             let at = arguments.firstIndex(of: "--voices-at").flatMap { arguments.indices.contains($0 + 1) ? Double(arguments[$0 + 1]) : nil }
             path = [.voices(id: id, at: at ?? 0)]
         }
@@ -177,6 +182,11 @@ struct RootView: View {
                                         + "more=\(search.list.hasMore ? "y" : "n")")
                 }
             }
+        }
+        // `--watch <id>`: the watch page for a video (US-020), on the Search tab's stack.
+        if path.isEmpty, let index = arguments.firstIndex(of: "--watch"), arguments.indices.contains(index + 1) {
+            tab = .search
+            searchPath = [.watch(videoID: arguments[index + 1])]
         }
         if !path.isEmpty { tab = .you }
     }
